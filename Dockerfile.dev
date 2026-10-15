@@ -1,0 +1,31 @@
+# Development image: like the production image, but ships the dev
+# dependencies (PHPUnit, composer bin tooling bases) so the integration
+# tests can run against a mounted working copy. Published as
+# jbsnewmedia/avalynxofficeeas-dev (latest) by the docker-image workflow,
+# keeping the dev stream in its own -dev repository like the production
+# repository jbsnewmedia/avalynxofficeeas.
+FROM webdevops/php-apache:8.5
+
+ENV WEB_DOCUMENT_ROOT=/app/public \
+    PHP_MEMORY_LIMIT=512M \
+    PHP_MAX_EXECUTION_TIME=300 \
+    PHP_POST_MAX_SIZE=200M \
+    PHP_DISMOD=ioncube \
+    PHP_ENMOD=mailparse
+
+WORKDIR /app
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY . /app
+
+# Devices authenticate with HTTP Basic auth; pass the Authorization header
+# through to FastCGI (PHP_AUTH_USER / HTTP_AUTHORIZATION).
+RUN printf '<Directory "/app/public">\n    CGIPassAuth On\n</Directory>\n' \
+    > /opt/docker/etc/httpd/vhost.common.d/11-cgipassauth.conf
+
+# Dev dependencies are included on purpose: the image is the runtime for
+# `vendor/bin/phpunit` against a mounted working copy (see AGENTS.md).
+RUN composer install --optimize-autoloader --no-interaction --no-progress \
+    && chown -R application:application /app \
+    && mkdir -p /app/var/eas-state /app/var/log/eas /app/data/attachments \
+    && chown -R application:application /app/var /app/data

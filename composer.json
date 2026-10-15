@@ -1,0 +1,112 @@
+{
+    "name": "jbsnewmedia/avalynxofficeeas",
+    "description": "ActiveSync extension for AvalynxOffice.",
+    "type": "project",
+    "license": "AGPL-3.0-only",
+    "require": {
+        "php": ">=8.5",
+        "ext-sodium": "*",
+        "doctrine/dbal": "^4.4.4",
+        "doctrine/orm": "^3.7.2",
+        "laminas/laminas-mail": "^2.5.2",
+        "monolog/monolog": "^3.0",
+        "symfony/cache": "^7.3|^8.1",
+        "symfony/uid": "^7.3|^8.1",
+        "z-push/z-push-dev": "^2.7.6"
+    },
+    "require-dev": {
+        "bamarni/composer-bin-plugin": "^1.9.1",
+        "phpunit/phpunit": "^12"
+    },
+    "autoload": {
+        "psr-4": {
+            "AvalynxOfficeEas\\": "src/"
+        },
+        "classmap": [
+            "vendor/z-push/z-push-dev/src/autodiscover/",
+            "vendor/z-push/z-push-dev/src/backend/",
+            "vendor/z-push/z-push-dev/src/include/",
+            "vendor/z-push/z-push-dev/src/lib/"
+        ],
+        "files": [
+            "vendor/z-push/z-push-dev/src/version.php",
+            "vendor/z-push/z-push-dev/src/lib/core/zpushdefs.php",
+            "vendor/z-push/z-push-dev/src/lib/utils/compat.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "AvalynxOfficeEas\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "bin-ecs-install": [
+            "composer bin ecs install"
+        ],
+        "bin-ecs-update": [
+            "composer bin ecs update"
+        ],
+        "bin-ecs": [
+            "vendor-bin/ecs/vendor/bin/php-cs-fixer check --allow-risky=yes"
+        ],
+        "bin-ecs-fix": [
+            "vendor-bin/ecs/vendor/bin/php-cs-fixer fix --allow-risky=yes"
+        ],
+        "bin-ecs-v": [
+            "vendor-bin/ecs/vendor/bin/php-cs-fixer -V"
+        ],
+        "bin-phpstan-install": [
+            "composer bin phpstan install"
+        ],
+        "bin-phpstan-update": [
+            "composer bin phpstan update"
+        ],
+        "bin-phpstan": [
+            "vendor-bin/phpstan/vendor/bin/phpstan analyse --configuration=phpstan.neon"
+        ],
+        "bin-phpstan-v": [
+            "vendor-bin/phpstan/vendor/bin/phpstan -V"
+        ],
+        "bin-rector-install": [
+            "composer bin rector install"
+        ],
+        "bin-rector-update": [
+            "composer bin rector update"
+        ],
+        "bin-rector": [
+            "vendor-bin/rector/vendor/bin/rector --dry-run"
+        ],
+        "bin-rector-process": [
+            "vendor-bin/rector/vendor/bin/rector process"
+        ],
+        "bin-rector-v": [
+            "vendor-bin/rector/vendor/bin/rector -V"
+        ],
+        "ci": [
+            "@bin-ecs",
+            "@bin-rector",
+            "@bin-phpstan",
+            "vendor/bin/phpunit"
+        ],
+        "ci-fix": [
+            "@bin-ecs-fix",
+            "@bin-rector-process",
+            "@bin-phpstan",
+            "vendor/bin/phpunit"
+        ]
+    },
+    "repositories": [],
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "bamarni/composer-bin-plugin": true
+        }
+    },
+    "extra": {
+        "bamarni-bin": {
+            "bin-links": false,
+            "target-directory": "vendor-bin",
+            "forward-command": true
+        }
+    }
+}

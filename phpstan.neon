@@ -1,0 +1,11 @@
+# Basis for plugin code quality (same policy as the avalynxoffice core)
+parameters:
+    paths:
+        - src
+        - tests
+    bootstrapFiles:
+        - vendor/autoload.php
+    level: max
+    treatPhpDocTypesAsCertain: false
+    doctrine:
+        allowNullablePropertyForRequiredField: true

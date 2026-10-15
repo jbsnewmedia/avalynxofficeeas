@@ -1,0 +1,11 @@
+/vendor/
+/vendor-bin/*/vendor/
+/var/
+/tmp/
+/.env
+/.phpunit.cache/
+composer.phar
+.idea/
+.php-cs-fixer.cache
+.phpunit.result.cache/vendor-bin/*/vendor/
+/vendor-bin/*/composer.lock
