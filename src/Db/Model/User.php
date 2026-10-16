@@ -29,6 +29,14 @@ class User
     private array $roles = [];
     #[ORM\Column(type: 'boolean', options: ['default' => true])]
     private bool $active = true;
+    /**
+     * Last successful authentication (web login or device sync). Part of the
+     * Active Seat definition (APL 1.0): only accounts that authenticated
+     * within the last 30 calendar days consume a license seat. Written by
+     * the core on login and by this plugin on every successful Logon().
+     */
+    #[ORM\Column(name: 'last_auth_at', type: 'datetime_immutable', nullable: true)]
+    private ?\DateTimeImmutable $lastAuthAt = null;
 
     public function __construct()
     {
@@ -72,6 +80,18 @@ class User
     public function setActive(bool $active): self
     {
         $this->active = $active;
+
+        return $this;
+    }
+
+    public function getLastAuthAt(): ?\DateTimeImmutable
+    {
+        return $this->lastAuthAt;
+    }
+
+    public function setLastAuthAt(?\DateTimeImmutable $lastAuthAt): self
+    {
+        $this->lastAuthAt = $lastAuthAt;
 
         return $this;
     }

@@ -43,6 +43,82 @@ final class AvalynxBackendTest extends TestCase
         self::assertFalse($this->backend->Logon('nobody@example.com', '', 'admin'));
     }
 
+    public function testLogonRecordsSeatActivity(): void
+    {
+        // The Logon() in setUp() already recorded the authentication; clear
+        // the identity map because the backend loaded the user before the
+        // recorder's raw update.
+        self::em()->clear();
+        $user = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $this->fixture['user']->getId());
+
+        self::assertNotNull($user);
+        self::assertInstanceOf(\DateTimeImmutable::class, $user->getLastAuthAt());
+        self::assertLessThanOrEqual(5, time() - $user->getLastAuthAt()->getTimestamp());
+    }
+
+    public function testLogonRefreshesStaleSeatActivity(): void
+    {
+        self::em()->clear();
+        $userId = $this->fixture['user']->getId();
+        $user = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
+        self::assertNotNull($user);
+        $user->setLastAuthAt(new \DateTimeImmutable('-2 days'));
+        self::em()->flush();
+        self::em()->clear();
+
+        $backend = new AvalynxBackend();
+        self::assertTrue($backend->Logon('info@example.com', '', 'admin'));
+
+        self::em()->clear();
+        $reloaded = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
+        self::assertNotNull($reloaded);
+        self::assertNotNull($reloaded->getLastAuthAt());
+        self::assertGreaterThan(new \DateTimeImmutable('-1 hour')->getTimestamp(), $reloaded->getLastAuthAt()->getTimestamp());
+    }
+
+    public function testLogonKeepsRecentSeatActivityUnchanged(): void
+    {
+        self::em()->clear();
+        $userId = $this->fixture['user']->getId();
+        $recent = new \DateTimeImmutable('-30 minutes');
+        $user = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
+        self::assertNotNull($user);
+        $user->setLastAuthAt($recent);
+        self::em()->flush();
+        self::em()->clear();
+
+        $backend = new AvalynxBackend();
+        self::assertTrue($backend->Logon('info@example.com', '', 'admin'));
+
+        $reloaded = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
+        self::assertNotNull($reloaded);
+        self::assertNotNull($reloaded->getLastAuthAt());
+        self::assertSame(
+            $recent->format('Y-m-d H:i:s'),
+            $reloaded->getLastAuthAt()->format('Y-m-d H:i:s'),
+        );
+    }
+
+    public function testFailedLogonDoesNotRecordSeatActivity(): void
+    {
+        // Fresh read: the successful Logon() in setUp() already recorded a
+        // value.
+        self::em()->clear();
+        $userId = $this->fixture['user']->getId();
+        $user = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
+        self::assertNotNull($user);
+        $user->setLastAuthAt(null);
+        self::em()->flush();
+        self::em()->clear();
+
+        $backend = new AvalynxBackend();
+        self::assertFalse($backend->Logon('info@example.com', '', 'wrong'));
+
+        $reloaded = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
+        self::assertNotNull($reloaded);
+        self::assertNull($reloaded->getLastAuthAt());
+    }
+
     public function testGetFolderListContainsMailFoldersContactsAndCalendar(): void
     {
         $folders = $this->backend->GetFolderList();

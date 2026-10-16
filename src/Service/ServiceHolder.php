@@ -41,6 +41,7 @@ final class ServiceHolder
         private readonly FolderService $folderService,
         private readonly EntityManagerInterface $entityManager,
         private readonly LicenseState $licenseState,
+        private readonly LastAuthenticationRecorder $lastAuthenticationRecorder,
     ) {
     }
 
@@ -69,6 +70,7 @@ final class ServiceHolder
         $calendarService = new CalendarService($entityManager, $calendarMapper, $licenseState);
         $attachmentService = new AttachmentService($entityManager, $attachmentStorage);
         $sendMailService = new SendMailService($entityManager, $folderService, $attachmentStorage, $licenseState);
+        $lastAuthenticationRecorder = new LastAuthenticationRecorder($entityManager);
 
         self::$instance = new self(
             $projectDir,
@@ -86,6 +88,7 @@ final class ServiceHolder
             $folderService,
             $entityManager,
             $licenseState,
+            $lastAuthenticationRecorder,
         );
     }
 
@@ -176,5 +179,10 @@ final class ServiceHolder
     public function getLicenseState(): LicenseState
     {
         return $this->licenseState;
+    }
+
+    public function getLastAuthenticationRecorder(): LastAuthenticationRecorder
+    {
+        return $this->lastAuthenticationRecorder;
     }
 }
