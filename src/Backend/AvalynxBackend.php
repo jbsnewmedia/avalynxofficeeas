@@ -62,6 +62,7 @@ final class AvalynxBackend extends \BackendDiff
     private readonly FolderService $folderService;
     private readonly \AvalynxOfficeEas\Licensing\LicenseState $licenseState;
     private readonly \Doctrine\ORM\EntityManagerInterface $entityManager;
+    private readonly \AvalynxOfficeEas\Service\LastAuthenticationRecorder $lastAuthenticationRecorder;
 
     public function __construct()
     {
@@ -81,6 +82,7 @@ final class AvalynxBackend extends \BackendDiff
         $this->folderService = $holder->getFolderService();
         $this->licenseState = $holder->getLicenseState();
         $this->entityManager = $holder->getEntityManager();
+        $this->lastAuthenticationRecorder = $holder->getLastAuthenticationRecorder();
     }
 
     public function Logon($username, $domain, $password): bool
@@ -101,6 +103,16 @@ final class AvalynxBackend extends \BackendDiff
 
         $this->context = $context;
         $this->wasteBasket = null;
+
+        // Successful device authentication: refresh the seat activity (APL
+        // 1.0 Active Seat definition, last 30 calendar days). The recorder
+        // is deliberately invoked after the context is set so the request
+        // proceeds even if the accounting write fails.
+        try {
+            $this->lastAuthenticationRecorder->record($context->getUser());
+        } catch (\Throwable $exception) {
+            \ZLog::Write(LOGLEVEL_WARN, sprintf('AvalynxBackend->Logon(): seat activity could not be recorded (%s)', $exception->getMessage()));
+        }
 
         \ZLog::Write(LOGLEVEL_DEBUG, sprintf("AvalynxBackend->Logon('%s'): success", $username));
 

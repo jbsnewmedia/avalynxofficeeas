@@ -10,7 +10,11 @@
 - The vendored Z-Push fork lives in `z-push/` (AGPL-3.0, upstream 2.7.6).
 - Licensing: device writes are blocked when the core's `license_state`
   reports READ_ONLY (`AvalynxOfficeEas\Licensing\LicenseState`); outgoing mail is
-  only queued (delivery + licensing stay in the core).
+  only queued (delivery + licensing stay in the core). Successful device
+  logons refresh the seat activity (`app_user.last_auth_at`,
+  `AvalynxOfficeEas\Service\LastAuthenticationRecorder`) per the Active Seat
+  definition of the AvalynxOffice Public License (APL 1.0); seat accounting
+  itself stays in the core.
 
 ## Runtime and tooling
 
