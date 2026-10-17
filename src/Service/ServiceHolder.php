@@ -42,6 +42,7 @@ final class ServiceHolder
         private readonly EntityManagerInterface $entityManager,
         private readonly LicenseState $licenseState,
         private readonly LastAuthenticationRecorder $lastAuthenticationRecorder,
+        private readonly AuthThrottle $authThrottle,
     ) {
     }
 
@@ -71,6 +72,11 @@ final class ServiceHolder
         $attachmentService = new AttachmentService($entityManager, $attachmentStorage);
         $sendMailService = new SendMailService($entityManager, $folderService, $attachmentStorage, $licenseState);
         $lastAuthenticationRecorder = new LastAuthenticationRecorder($entityManager);
+        $authThrottle = new AuthThrottle(new \Symfony\Component\Cache\Adapter\FilesystemAdapter(
+            'avalynxofficeeas-auth',
+            0,
+            $projectDir.'/var/cache/auth-throttle',
+        ));
 
         self::$instance = new self(
             $projectDir,
@@ -89,6 +95,7 @@ final class ServiceHolder
             $entityManager,
             $licenseState,
             $lastAuthenticationRecorder,
+            $authThrottle,
         );
     }
 
@@ -184,5 +191,10 @@ final class ServiceHolder
     public function getLastAuthenticationRecorder(): LastAuthenticationRecorder
     {
         return $this->lastAuthenticationRecorder;
+    }
+
+    public function getAuthThrottle(): AuthThrottle
+    {
+        return $this->authThrottle;
     }
 }

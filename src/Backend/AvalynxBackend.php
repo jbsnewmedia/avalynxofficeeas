@@ -23,6 +23,7 @@ use AvalynxOfficeEas\Db\Model\Mailbox;
 use AvalynxOfficeEas\Dto\EasMailboxContext;
 use AvalynxOfficeEas\Licensing\MutationBlockedException;
 use AvalynxOfficeEas\Service\AttachmentService;
+use AvalynxOfficeEas\Service\AuthThrottle;
 use AvalynxOfficeEas\Service\CalendarMapper;
 use AvalynxOfficeEas\Service\CalendarService;
 use AvalynxOfficeEas\Service\ContactMapper;
@@ -63,6 +64,7 @@ final class AvalynxBackend extends \BackendDiff
     private readonly \AvalynxOfficeEas\Licensing\LicenseState $licenseState;
     private readonly \Doctrine\ORM\EntityManagerInterface $entityManager;
     private readonly \AvalynxOfficeEas\Service\LastAuthenticationRecorder $lastAuthenticationRecorder;
+    private readonly AuthThrottle $authThrottle;
 
     public function __construct()
     {
@@ -83,6 +85,7 @@ final class AvalynxBackend extends \BackendDiff
         $this->licenseState = $holder->getLicenseState();
         $this->entityManager = $holder->getEntityManager();
         $this->lastAuthenticationRecorder = $holder->getLastAuthenticationRecorder();
+        $this->authThrottle = $holder->getAuthThrottle();
     }
 
     public function Logon($username, $domain, $password): bool
@@ -93,13 +96,26 @@ final class AvalynxBackend extends \BackendDiff
             return false;
         }
 
+        // Brute-force guard: block further attempts from a client IP that
+        // exceeded the failure limit; a successful logon clears the counter.
+        $clientIp = AuthThrottle::clientIp();
+
+        if ($this->authThrottle->isBlocked($clientIp)) {
+            \ZLog::Write(LOGLEVEL_WARN, sprintf('AvalynxBackend->Logon(): blocked, too many failed attempts from %s', $clientIp));
+
+            return false;
+        }
+
         $context = $this->mailboxResolver->resolve($username, $password);
 
         if (null === $context) {
+            $this->authThrottle->recordFailure($clientIp);
             \ZLog::Write(LOGLEVEL_WARN, sprintf("AvalynxBackend->Logon('%s'): failed", $username));
 
             return false;
         }
+
+        $this->authThrottle->reset($clientIp);
 
         $this->context = $context;
         $this->wasteBasket = null;
