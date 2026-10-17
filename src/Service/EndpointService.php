@@ -3,11 +3,8 @@
 declare(strict_types=1);
 
 /*
- * Copyright (C) 2026 JBS New Media GmbH
+ * Copyright (C) 2026 JBS New Media GmbH <https://jbs-newmedia.com>
  * Licensed under the GNU Affero General Public License v3.0.
- *
- * Ported from the AvalynxOffice core (copyright JBS New Media GmbH) by the
- * copyright holder for this AGPL-3.0 project.
  */
 
 namespace AvalynxOfficeEas\Service;

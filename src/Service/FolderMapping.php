@@ -3,12 +3,8 @@
 declare(strict_types=1);
 
 /*
- * Copyright (C) 2026 JBS New Media GmbH
+ * Copyright (C) 2026 JBS New Media GmbH <https://jbs-newmedia.com>
  * Licensed under the GNU Affero General Public License v3.0.
- *
- * Encodes and decodes EAS folder server ids and maps mail folders to EAS
- * folder types. Ported from the AvalynxOffice core and relicensed AGPL-3.0
- * by the copyright holder for this project.
  */
 
 namespace AvalynxOfficeEas\Service;

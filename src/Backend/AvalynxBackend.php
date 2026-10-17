@@ -3,13 +3,8 @@
 declare(strict_types=1);
 
 /*
- * Copyright (C) 2026 JBS New Media GmbH
+ * Copyright (C) 2026 JBS New Media GmbH <https://jbs-newmedia.com>
  * Licensed under the GNU Affero General Public License v3.0.
- *
- * Z-Push backend bridge for AvalynxOffice (avalynxofficeeas). Implements the untyped
- * Z-Push extension points and delegates to the typed AvalynxOfficeEas\Service*
- * classes. Ported from the AvalynxOffice core bridge by the copyright
- * holder for this AGPL-3.0 project.
  */
 
 namespace AvalynxOfficeEas\Backend;
