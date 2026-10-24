@@ -48,3 +48,12 @@ docker run --rm --user 1000:1000 --entrypoint /bin/bash --network <db-network> \
   readonly where possible).
 - Do not add code that instantiates `App\` classes — the PSR-4 root is
   `AvalynxOfficeEas\` only.
+
+## Tags and releases — maintainer only
+
+**Agents must never create, push, or delete git tags or GitHub releases —
+in this repository or in avalynxofficeeas.** Tagging, release creation and
+version bumps are done exclusively by the maintainer (Jürgen Schwind).
+This includes annotated/lightweight tags, remote tag pushes and any action
+that could trigger release workflows on GitHub or Docker Hub. The agent may
+report that a commit is a candidate for tagging, but must not tag.
