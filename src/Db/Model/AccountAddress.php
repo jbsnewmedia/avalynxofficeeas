@@ -12,29 +12,29 @@ namespace AvalynxOfficeEas\Db\Model;
 use Doctrine\ORM\Mapping as ORM;
 
 #[ORM\Entity]
-#[ORM\Table(name: 'mailbox_address')]
-#[ORM\UniqueConstraint(name: 'uniq_mailbox_address', columns: ['mailbox_id', 'address_id'])]
+#[ORM\Table(name: 'account_address')]
+#[ORM\UniqueConstraint(name: 'uniq_account_address', columns: ['account_id', 'address_id'])]
 #[ORM\HasLifecycleCallbacks]
-class MailboxAddress
+class AccountAddress
 {
     use TimestampableTrait;
     #[ORM\Id]
-    #[ORM\ManyToOne(targetEntity: Mailbox::class)]
-    #[ORM\JoinColumn(name: 'mailbox_id', referencedColumnName: 'id')]
-    private ?Mailbox $mailbox = null;
+    #[ORM\ManyToOne(targetEntity: Account::class)]
+    #[ORM\JoinColumn(name: 'account_id', referencedColumnName: 'id')]
+    private ?Account $account = null;
     #[ORM\Id]
     #[ORM\ManyToOne(targetEntity: Address::class)]
     #[ORM\JoinColumn(name: 'address_id', referencedColumnName: 'id')]
     private ?Address $address = null;
 
-    public function getMailbox(): ?Mailbox
+    public function getAccount(): ?Account
     {
-        return $this->mailbox;
+        return $this->account;
     }
 
-    public function setMailbox(?Mailbox $mailbox): self
+    public function setAccount(?Account $account): self
     {
-        $this->mailbox = $mailbox;
+        $this->account = $account;
 
         return $this;
     }

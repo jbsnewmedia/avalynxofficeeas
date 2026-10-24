@@ -9,13 +9,13 @@ declare(strict_types=1);
 
 namespace AvalynxOfficeEas\Backend;
 
+use AvalynxOfficeEas\Db\Model\Account;
 use AvalynxOfficeEas\Db\Model\Address;
 use AvalynxOfficeEas\Db\Model\CalendarEvent;
 use AvalynxOfficeEas\Db\Model\Email;
 use AvalynxOfficeEas\Db\Model\EmailAttachmentLink;
 use AvalynxOfficeEas\Db\Model\Folder;
-use AvalynxOfficeEas\Db\Model\Mailbox;
-use AvalynxOfficeEas\Dto\EasMailboxContext;
+use AvalynxOfficeEas\Dto\EasUserContext;
 use AvalynxOfficeEas\Licensing\MutationBlockedException;
 use AvalynxOfficeEas\Service\AttachmentService;
 use AvalynxOfficeEas\Service\AuthThrottle;
@@ -25,26 +25,31 @@ use AvalynxOfficeEas\Service\ContactMapper;
 use AvalynxOfficeEas\Service\ContactService;
 use AvalynxOfficeEas\Service\FolderMapping;
 use AvalynxOfficeEas\Service\FolderService;
-use AvalynxOfficeEas\Service\MailboxResolver;
 use AvalynxOfficeEas\Service\MailFolderService;
 use AvalynxOfficeEas\Service\MessageMapper;
 use AvalynxOfficeEas\Service\MessageMutationService;
 use AvalynxOfficeEas\Service\SendMailService;
 use AvalynxOfficeEas\Service\ServiceHolder;
+use AvalynxOfficeEas\Service\UserResolver;
 use Symfony\Component\Uid\UuidV7;
 
 /**
  * Z-Push backend bridging Exchange ActiveSync to the AvalynxOffice mail
- * storage. Folder ids are deterministic base64 encoded
- * "mail|mailboxId|folderId" and "contacts|mailboxId" strings so they stay
- * stable across devices.
+ * storage. The device logs in with an application user (same login as the
+ * AvalynxOffice web app) and synchronizes every account assigned to that
+ * user: all mail folders, the contacts folder and the calendar folder of
+ * each account.
+ *
+ * Folder ids are deterministic base64 encoded "mail|accountId|folderId" and
+ * "contacts|accountId"/"calendar|accountId" strings so they stay stable
+ * across devices; the account scope is always part of the server id.
  */
 final class AvalynxBackend extends \BackendDiff
 {
-    private ?EasMailboxContext $context = null;
+    private ?EasUserContext $context = null;
     private ?Folder $wasteBasket = null;
 
-    private readonly MailboxResolver $mailboxResolver;
+    private readonly UserResolver $userResolver;
     private readonly MailFolderService $mailFolderService;
     private readonly MessageMapper $messageMapper;
     private readonly SendMailService $sendMailService;
@@ -65,7 +70,7 @@ final class AvalynxBackend extends \BackendDiff
     {
         $holder = ServiceHolder::instance();
 
-        $this->mailboxResolver = $holder->getMailboxResolver();
+        $this->userResolver = $holder->getUserResolver();
         $this->mailFolderService = $holder->getMailFolderService();
         $this->messageMapper = $holder->getMessageMapper();
         $this->sendMailService = $holder->getSendMailService();
@@ -101,7 +106,7 @@ final class AvalynxBackend extends \BackendDiff
             return false;
         }
 
-        $context = $this->mailboxResolver->resolve($username, $password);
+        $context = $this->userResolver->resolve($username, $password);
 
         if (null === $context) {
             $this->authThrottle->recordFailure($clientIp);
@@ -125,7 +130,7 @@ final class AvalynxBackend extends \BackendDiff
             \ZLog::Write(LOGLEVEL_WARN, sprintf('AvalynxBackend->Logon(): seat activity could not be recorded (%s)', $exception->getMessage()));
         }
 
-        \ZLog::Write(LOGLEVEL_DEBUG, sprintf("AvalynxBackend->Logon('%s'): success", $username));
+        \ZLog::Write(LOGLEVEL_DEBUG, sprintf("AvalynxBackend->Logon('%s'): success (%d account(s))", $username, count($context->getAccounts())));
 
         return true;
     }
@@ -148,44 +153,45 @@ final class AvalynxBackend extends \BackendDiff
      */
     public function GetFolderList(): array|false
     {
-        if (!$this->requireMailbox()) {
-            return false;
-        }
-
-        $mailbox = $this->mailbox();
-        $mailboxId = $mailbox->getId();
-
-        if (null === $mailboxId) {
+        if (!$this->requireContext()) {
             return false;
         }
 
         $folders = [];
 
-        foreach ($this->mailFolderService->foldersForMailbox($mailbox) as $folder) {
-            $folderId = $folder->getId();
+        foreach ($this->context()->getAccounts() as $account) {
+            $accountId = $account->getId();
 
-            if (null === $folderId) {
+            if (null === $accountId) {
                 continue;
             }
 
+            foreach ($this->mailFolderService->foldersForAccount($account) as $folder) {
+                $folderId = $folder->getId();
+
+                if (null === $folderId) {
+                    continue;
+                }
+
+                $folders[] = [
+                    'id' => $this->folderMapping->folderServerId($accountId, $folderId),
+                    'parent' => '0',
+                    'mod' => $this->folderStatHash($folder),
+                ];
+            }
+
             $folders[] = [
-                'id' => $this->folderMapping->folderServerId($mailboxId, $folderId),
+                'id' => $this->folderMapping->contactServerId($accountId),
                 'parent' => '0',
-                'mod' => $this->folderStatHash($folder),
+                'mod' => $this->contactFolderStatHash($account),
+            ];
+
+            $folders[] = [
+                'id' => $this->folderMapping->calendarServerId($accountId),
+                'parent' => '0',
+                'mod' => $this->calendarFolderStatHash($account),
             ];
         }
-
-        $folders[] = [
-            'id' => $this->folderMapping->contactServerId($mailboxId),
-            'parent' => '0',
-            'mod' => $this->contactFolderStatHash($mailbox),
-        ];
-
-        $folders[] = [
-            'id' => $this->folderMapping->calendarServerId($mailboxId),
-            'parent' => '0',
-            'mod' => $this->calendarFolderStatHash($mailbox),
-        ];
 
         return $folders;
     }
@@ -196,43 +202,31 @@ final class AvalynxBackend extends \BackendDiff
             return false;
         }
 
-        $contactsFolder = $this->contactsFolderFromServerId($id);
+        $contactsAccount = $this->accountFromContactsServerId($id);
 
-        if (null !== $contactsFolder) {
-            $syncFolder = new \SyncFolder();
-            $syncFolder->serverid = $id;
-            $syncFolder->parentid = '0';
-            $syncFolder->displayname = FolderMapping::CONTACTS_NAME;
-            $syncFolder->type = SYNC_FOLDER_TYPE_CONTACT;
-
-            return $syncFolder;
+        if (null !== $contactsAccount) {
+            return $this->scopedFolder($id, $this->scopedName($contactsAccount, FolderMapping::CONTACTS_NAME), SYNC_FOLDER_TYPE_CONTACT);
         }
 
-        if (null !== $this->calendarFolderFromServerId($id)) {
-            $syncFolder = new \SyncFolder();
-            $syncFolder->serverid = $id;
-            $syncFolder->parentid = '0';
-            $syncFolder->displayname = FolderMapping::CALENDAR_NAME;
-            $syncFolder->type = SYNC_FOLDER_TYPE_APPOINTMENT;
+        $calendarAccount = $this->accountFromCalendarServerId($id);
 
-            return $syncFolder;
+        if (null !== $calendarAccount) {
+            return $this->scopedFolder($id, $this->scopedName($calendarAccount, FolderMapping::CALENDAR_NAME), SYNC_FOLDER_TYPE_APPOINTMENT);
         }
 
-        $folder = $this->folderFromServerId($id);
+        $folderContext = $this->folderContextFromServerId($id);
 
-        if (null === $folder) {
+        if (null === $folderContext) {
             \ZLog::Write(LOGLEVEL_WARN, sprintf("AvalynxBackend->GetFolder('%s'): unknown folder", $id));
 
             return false;
         }
 
-        $syncFolder = new \SyncFolder();
-        $syncFolder->serverid = $id;
-        $syncFolder->parentid = '0';
-        $syncFolder->displayname = $folder->getName();
-        $syncFolder->type = $this->folderMapping->easType($folder);
-
-        return $syncFolder;
+        return $this->scopedFolder(
+            $id,
+            $this->scopedName($folderContext['account'], $folderContext['folder']->getName()),
+            $this->folderMapping->easType($folderContext['folder']),
+        );
     }
 
     /**
@@ -244,34 +238,36 @@ final class AvalynxBackend extends \BackendDiff
             return false;
         }
 
-        $contactsFolder = $this->contactsFolderFromServerId($id);
+        $contactsAccount = $this->accountFromContactsServerId($id);
 
-        if (null !== $contactsFolder) {
+        if (null !== $contactsAccount) {
             return [
                 'id' => $id,
                 'parent' => '0',
-                'mod' => $this->contactFolderStatHash($this->mailbox()),
+                'mod' => $this->contactFolderStatHash($contactsAccount),
             ];
         }
 
-        if (null !== $this->calendarFolderFromServerId($id)) {
+        $calendarAccount = $this->accountFromCalendarServerId($id);
+
+        if (null !== $calendarAccount) {
             return [
                 'id' => $id,
                 'parent' => '0',
-                'mod' => $this->calendarFolderStatHash($this->mailbox()),
+                'mod' => $this->calendarFolderStatHash($calendarAccount),
             ];
         }
 
-        $folder = $this->folderFromServerId($id);
+        $folderContext = $this->folderContextFromServerId($id);
 
-        if (null === $folder) {
+        if (null === $folderContext) {
             return false;
         }
 
         return [
             'id' => $id,
             'parent' => '0',
-            'mod' => $this->folderStatHash($folder),
+            'mod' => $this->folderStatHash($folderContext['folder']),
         ];
     }
 
@@ -289,35 +285,40 @@ final class AvalynxBackend extends \BackendDiff
             return false;
         }
 
-        if (!$this->requireMailbox() || !is_string($displayname) || '' === $displayname) {
+        if (!$this->requireContext() || !is_string($displayname) || '' === $displayname) {
             return false;
         }
 
-        $parent = is_string($folderid) ? $this->folderFromServerId($folderid) : null;
+        // Folder creation at the root level carries no account scope: the
+        // folder is created on the user's primary account. A parent folder
+        // pins the account instead.
+        $parentContext = is_string($folderid) && '0' !== $folderid
+            ? $this->folderContextFromServerId($folderid)
+            : null;
+        $account = $parentContext['account'] ?? $this->context()->getPrimaryAccount();
 
-        if ('0' !== $folderid && null === $parent) {
-            \ZLog::Write(LOGLEVEL_WARN, sprintf("AvalynxBackend->ChangeFolder('%s'): parent folder not found", $folderid));
+        if (null === $account) {
+            \ZLog::Write(LOGLEVEL_WARN, sprintf("AvalynxBackend->ChangeFolder('%s'): parent folder not found", (string) $folderid));
 
             return false;
         }
-
-        $mailbox = $this->mailbox();
-        $mailboxId = $mailbox->getId();
 
         try {
             $this->licenseState->assertMutationAllowed('SETTINGS_WRITE');
-            $folderId = $this->folderService->ensureFolder($mailbox, $displayname)->getId();
+            $folderId = $this->folderService->ensureFolder($account, $displayname)->getId();
         } catch (MutationBlockedException $exception) {
             \ZLog::Write(LOGLEVEL_WARN, sprintf('AvalynxBackend->ChangeFolder(): blocked by the license policy (%s)', $exception->operation));
 
             return false;
         }
 
-        if (null === $mailboxId || null === $folderId) {
+        $accountId = $account->getId();
+
+        if (null === $accountId || null === $folderId) {
             return false;
         }
 
-        return $this->folderMapping->folderServerId($mailboxId, $folderId);
+        return $this->folderMapping->folderServerId($accountId, $folderId);
     }
 
     /**
@@ -339,42 +340,44 @@ final class AvalynxBackend extends \BackendDiff
      */
     public function GetMessageList($folderid, $cutoffdate): array|false
     {
-        if (!$this->requireMailbox()) {
+        if (!$this->requireContext()) {
             return false;
         }
 
-        $contactsFolder = $this->contactsFolderFromServerId((string) $folderid);
+        $contactsAccount = $this->accountFromContactsServerId((string) $folderid);
 
-        if (null !== $contactsFolder) {
+        if (null !== $contactsAccount) {
             $messages = [];
 
-            foreach ($this->contactService->contactsForMailbox($this->mailbox()) as $contact) {
+            foreach ($this->contactService->contactsForAccount($contactsAccount) as $contact) {
                 $messages[] = $this->contactMapper->stat($contact);
             }
 
             return $messages;
         }
 
-        if (null !== $this->calendarFolderFromServerId((string) $folderid)) {
+        $calendarAccount = $this->accountFromCalendarServerId((string) $folderid);
+
+        if (null !== $calendarAccount) {
             $messages = [];
 
-            foreach ($this->calendarService->eventsForMailbox($this->mailbox()) as $event) {
+            foreach ($this->calendarService->eventsForAccount($calendarAccount) as $event) {
                 $messages[] = $this->calendarMapper->stat($event);
             }
 
             return $messages;
         }
 
-        $folder = $this->folderFromServerId($folderid);
+        $folderContext = $this->folderContextFromServerId((string) $folderid);
 
-        if (null === $folder) {
+        if (null === $folderContext) {
             return false;
         }
 
         $cutoff = \is_int($cutoffdate) && $cutoffdate > 0 ? $cutoffdate : 0;
         $messages = [];
 
-        foreach ($this->mailFolderService->emailsForFolder($this->mailbox(), $folder, $cutoff) as $email) {
+        foreach ($this->mailFolderService->emailsForFolder($folderContext['account'], $folderContext['folder'], $cutoff) as $email) {
             $messages[] = $this->messageMapper->statMessage($email);
         }
 
@@ -445,9 +448,10 @@ final class AvalynxBackend extends \BackendDiff
     public function ChangeMessage($folderid, $id, $message, $contentparameters): array|false
     {
         try {
+            $calendarAccount = is_string($folderid) ? $this->accountFromCalendarServerId($folderid) : null;
             $calendarEvent = $this->eventFromServerId($folderid, (string) $id);
 
-            if (null !== $calendarEvent || null !== $this->calendarFolderFromServerId((string) $folderid)) {
+            if (null !== $calendarEvent || null !== $calendarAccount) {
                 if (!$message instanceof \SyncAppointment) {
                     return false;
                 }
@@ -456,7 +460,7 @@ final class AvalynxBackend extends \BackendDiff
                     $this->calendarService->update($calendarEvent, $message);
                     $storedEvent = $calendarEvent;
                 } else {
-                    $storedEvent = $this->calendarService->create($this->mailbox(), $message);
+                    $storedEvent = $this->calendarService->create($this->accountFromFolderIdOrFail($folderid), $message);
                 }
 
                 \ZLog::Write(LOGLEVEL_DEBUG, sprintf('AvalynxBackend->ChangeMessage event=%s', (string) $storedEvent->getId()?->toRfc4122()));
@@ -475,7 +479,7 @@ final class AvalynxBackend extends \BackendDiff
                     $this->contactService->update($contact, $message);
                     $address = $contact;
                 } else {
-                    $address = $this->contactService->create($this->mailbox(), $message);
+                    $address = $this->contactService->create($this->accountFromFolderIdOrFail($folderid), $message);
                 }
 
                 \ZLog::Write(LOGLEVEL_DEBUG, sprintf('AvalynxBackend->ChangeMessage contact=%s', (string) $address->getId()?->toRfc4122()));
@@ -515,11 +519,11 @@ final class AvalynxBackend extends \BackendDiff
     {
         \ZLog::Write(LOGLEVEL_DEBUG, sprintf('AvalynxBackend->SetReadFlag folderid=%s id=%s flags=%s', (string) $folderid, (string) $id, var_export($flags, true)));
 
-        if (null !== $this->contactsFolderFromServerId((string) $folderid)) {
+        if (null !== $this->accountFromContactsServerId((string) $folderid)) {
             return false;
         }
 
-        if (null !== $this->calendarFolderFromServerId((string) $folderid)) {
+        if (null !== $this->accountFromCalendarServerId((string) $folderid)) {
             return false;
         }
 
@@ -585,13 +589,13 @@ final class AvalynxBackend extends \BackendDiff
 
     public function MoveMessage($folderid, $id, $newfolderid, $contentparameters): bool
     {
-        if (null !== $this->contactsFolderFromServerId((string) $folderid)) {
+        if (null !== $this->accountFromContactsServerId((string) $folderid)) {
             \ZLog::Write(LOGLEVEL_WARN, 'AvalynxBackend->MoveMessage(): moving contacts is not supported');
 
             return false;
         }
 
-        if (null !== $this->calendarFolderFromServerId((string) $folderid)) {
+        if (null !== $this->accountFromCalendarServerId((string) $folderid)) {
             \ZLog::Write(LOGLEVEL_WARN, 'AvalynxBackend->MoveMessage(): moving calendar events is not supported');
 
             return false;
@@ -607,18 +611,18 @@ final class AvalynxBackend extends \BackendDiff
             return false;
         }
 
-        $target = $this->folderFromServerId($newfolderid);
+        $targetContext = $this->folderContextFromServerId($newfolderid);
 
-        if (null === $target) {
+        if (null === $targetContext) {
             \ZLog::Write(LOGLEVEL_WARN, sprintf("AvalynxBackend->MoveMessage('%s'): target folder not found", $newfolderid));
 
             return false;
         }
 
-        $source = $this->folderFromServerId($folderid);
+        $source = $this->folderFromServerId((string) $folderid);
 
         try {
-            $this->mutationService->move($email, $target, $source);
+            $this->mutationService->move($email, $targetContext['folder'], $source);
         } catch (MutationBlockedException $exception) {
             \ZLog::Write(LOGLEVEL_WARN, sprintf('AvalynxBackend->MoveMessage(): blocked by the license policy (%s)', $exception->operation));
 
@@ -634,18 +638,18 @@ final class AvalynxBackend extends \BackendDiff
      */
     public function EmptyFolder($folderid, $includeSubfolders = true): bool
     {
-        if (!$this->requireMailbox()) {
+        if (!$this->requireContext()) {
             return false;
         }
 
-        $folder = $this->folderFromServerId($folderid);
+        $folderContext = $this->folderContextFromServerId((string) $folderid);
 
-        if (null === $folder) {
+        if (null === $folderContext) {
             return false;
         }
 
         try {
-            $this->mutationService->emptyFolder($this->mailbox(), $folder);
+            $this->mutationService->emptyFolder($folderContext['account'], $folderContext['folder']);
         } catch (MutationBlockedException $exception) {
             \ZLog::Write(LOGLEVEL_WARN, sprintf('AvalynxBackend->EmptyFolder(): blocked by the license policy (%s)', $exception->operation));
 
@@ -657,20 +661,26 @@ final class AvalynxBackend extends \BackendDiff
 
     public function GetWasteBasket(): string|false
     {
-        if (!$this->requireMailbox()) {
+        if (!$this->requireContext()) {
             return false;
         }
 
-        $this->wasteBasket ??= $this->wasteBasketFolder($this->mailbox());
+        $account = $this->context()->getPrimaryAccount();
 
-        $mailboxId = $this->mailbox()->getId();
+        if (null === $account) {
+            return false;
+        }
+
+        $this->wasteBasket ??= $this->wasteBasketFolder($account);
+
+        $accountId = $account->getId();
         $folderId = $this->wasteBasket->getId();
 
-        if (null === $mailboxId || null === $folderId) {
+        if (null === $accountId || null === $folderId) {
             return false;
         }
 
-        return $this->folderMapping->folderServerId($mailboxId, $folderId);
+        return $this->folderMapping->folderServerId($accountId, $folderId);
     }
 
     public function SendMail($sm): bool
@@ -680,7 +690,7 @@ final class AvalynxBackend extends \BackendDiff
         }
 
         try {
-            return $this->sendMailService->send($sm, $this->mailbox());
+            return $this->sendMailService->send($sm, $this->accountForOutgoingMessage($sm));
         } catch (\RuntimeException $exception) {
             \ZLog::Write(LOGLEVEL_ERROR, sprintf('AvalynxBackend->SendMail(): %s', $exception->getMessage()));
 
@@ -722,51 +732,6 @@ final class AvalynxBackend extends \BackendDiff
         throw new \StatusException('AvalynxBackend->MeetingResponse(): meetings are not supported', SYNC_COMMONSTATUS_ITEMNOTFOUND);
     }
 
-    private function requireMailbox(): bool
-    {
-        if (null === $this->context) {
-            \ZLog::Write(LOGLEVEL_WARN, 'AvalynxBackend: no authenticated mailbox');
-
-            return false;
-        }
-
-        return true;
-    }
-
-    private function mailbox(): Mailbox
-    {
-        $context = $this->context;
-
-        if (null === $context) {
-            throw new \RuntimeException('AvalynxBackend is not authenticated');
-        }
-
-        return $context->getMailbox();
-    }
-
-    private function folderFromServerId(string $serverId): ?Folder
-    {
-        if (!$this->requireMailbox()) {
-            return null;
-        }
-
-        $decoded = $this->folderMapping->decode($serverId);
-
-        if (null === $decoded) {
-            return null;
-        }
-
-        $mailboxId = $this->mailbox()->getId();
-
-        if (null === $mailboxId || !$decoded->getMailboxId()->equals($mailboxId)) {
-            return null;
-        }
-
-        $folderId = $decoded->getFolderId();
-
-        return $this->mailFolderService->folderForMailbox($this->mailbox(), $folderId);
-    }
-
     /**
      * Real folder stats let Z-Push's ping detect backend changes (new events,
      * contacts) on every cycle instead of only once per hour.
@@ -785,43 +750,155 @@ final class AvalynxBackend extends \BackendDiff
             return false;
         }
 
-        if (null !== $this->contactsFolderFromServerId($folderid)) {
-            return $this->contactFolderStatHash($this->mailbox());
+        $contactsAccount = $this->accountFromContactsServerId($folderid);
+
+        if (null !== $contactsAccount) {
+            return $this->contactFolderStatHash($contactsAccount);
         }
 
-        if (null !== $this->calendarFolderFromServerId($folderid)) {
-            return $this->calendarFolderStatHash($this->mailbox());
+        $calendarAccount = $this->accountFromCalendarServerId($folderid);
+
+        if (null !== $calendarAccount) {
+            return $this->calendarFolderStatHash($calendarAccount);
         }
 
         // Mail folders are detected through the regular message diff.
         return false;
     }
 
-    private function calendarFolderFromServerId(string $serverId): ?UuidV7
+    private function requireContext(): bool
     {
-        $mailboxId = $this->folderMapping->decodeCalendar($serverId);
+        if (null === $this->context) {
+            \ZLog::Write(LOGLEVEL_WARN, 'AvalynxBackend: no authenticated user');
 
-        if (null === $mailboxId || !$this->requireMailbox() || !$mailboxId->equals($this->mailbox()->getId())) {
-            return null;
+            return false;
         }
 
-        return $mailboxId;
+        return true;
     }
 
-    private function contactsFolderFromServerId(string $serverId): ?UuidV7
+    private function context(): EasUserContext
     {
-        $mailboxId = $this->folderMapping->decodeContact($serverId);
+        $context = $this->context;
 
-        if (null === $mailboxId || !$this->requireMailbox() || !$mailboxId->equals($this->mailbox()->getId())) {
+        if (null === $context) {
+            throw new \RuntimeException('AvalynxBackend is not authenticated');
+        }
+
+        return $context;
+    }
+
+    /**
+     * @return array{account: Account, folder: Folder}|null
+     */
+    private function folderContextFromServerId(string $serverId): ?array
+    {
+        if (!$this->requireContext()) {
             return null;
         }
 
-        return $mailboxId;
+        $decoded = $this->folderMapping->decode($serverId);
+
+        if (null === $decoded) {
+            return null;
+        }
+
+        $account = $this->context()->getAccount($decoded->getAccountId());
+
+        if (null === $account) {
+            return null;
+        }
+
+        $folder = $this->mailFolderService->folderForAccount($account, $decoded->getFolderId());
+
+        if (null === $folder) {
+            return null;
+        }
+
+        return ['account' => $account, 'folder' => $folder];
+    }
+
+    private function folderFromServerId(string $serverId): ?Folder
+    {
+        return $this->folderContextFromServerId($serverId)['folder'] ?? null;
+    }
+
+    /**
+     * The account that owns an outgoing message: replies/forwards belong to
+     * the account of the source message, fresh messages go to the primary
+     * account of the user.
+     */
+    private function accountForOutgoingMessage(\SyncSendMail $sendMail): Account
+    {
+        // Replies/forwards carry their source folder in SyncSendMailSource:
+        // the message pins the account that owns the conversation.
+        $source = $sendMail->source;
+
+        if ($source instanceof \SyncSendMailSource
+            && is_string($source->folderid)
+            && is_string($source->itemid)
+        ) {
+            $sourceMessage = $this->messageFromServerId($source->folderid, $source->itemid);
+            $sourceAccount = $sourceMessage?->getAccount();
+
+            if (null !== $sourceAccount) {
+                return $sourceAccount;
+            }
+        }
+
+        $account = $this->context()->getPrimaryAccount();
+
+        if (null === $account) {
+            throw new \RuntimeException('No account assigned to this user');
+        }
+
+        return $account;
+    }
+
+    /**
+     * Resolves the account of a contacts or calendar server id (new events
+     * and contacts are created without an item id, so the folder id is the
+     * only scope carrier).
+     */
+    private function accountFromFolderIdOrFail(mixed $folderid): Account
+    {
+        $identifier = is_string($folderid) ? $folderid : '';
+        $account = $this->accountFromContactsServerId($identifier) ?? $this->accountFromCalendarServerId($identifier);
+
+        if (null === $account) {
+            throw new \RuntimeException(sprintf("AvalynxBackend: folder '%s' has no account scope", $identifier));
+        }
+
+        return $account;
+    }
+
+    private function accountFromContactsServerId(string $serverId): ?Account
+    {
+        $accountId = $this->folderMapping->decodeContact($serverId);
+
+        if (null === $accountId || !$this->requireContext() || !$this->context()->hasAccount($accountId)) {
+            return null;
+        }
+
+        return $this->context()->getAccount($accountId);
+    }
+
+    private function accountFromCalendarServerId(string $serverId): ?Account
+    {
+        $accountId = $this->folderMapping->decodeCalendar($serverId);
+
+        if (null === $accountId || !$this->requireContext() || !$this->context()->hasAccount($accountId)) {
+            return null;
+        }
+
+        return $this->context()->getAccount($accountId);
     }
 
     private function eventFromServerId(mixed $folderid, mixed $id): ?CalendarEvent
     {
-        if (!is_string($folderid) || null === $this->calendarFolderFromServerId($folderid) || !is_string($id)) {
+        $account = is_string($folderid) ? $this->accountFromCalendarServerId($folderid) : null;
+
+        if (null === $account || !is_string($id)) {
             return null;
         }
 
@@ -831,26 +908,14 @@ final class AvalynxBackend extends \BackendDiff
             return null;
         }
 
-        return $this->calendarService->eventForMailbox($this->mailbox(), $eventId);
-    }
-
-    private function calendarFolderStatHash(Mailbox $mailbox): string
-    {
-        $events = $this->calendarService->eventsForMailbox($mailbox);
-        $latest = 0;
-
-        foreach ($events as $event) {
-            $latest = max($latest, $event->getUpdatedAt()?->getTimestamp() ?? 0);
-        }
-
-        return md5('calendar|'.count($events).'|'.$latest);
+        return $this->calendarService->eventForAccount($account, $eventId);
     }
 
     private function contactFromServerId(mixed $folderid, mixed $id): ?Address
     {
-        $contactsFolder = $this->contactsFolderFromServerId(is_string($folderid) ? $folderid : '');
+        $account = is_string($folderid) ? $this->accountFromContactsServerId($folderid) : null;
 
-        if (null === $contactsFolder || !is_string($id)) {
+        if (null === $account || !is_string($id)) {
             return null;
         }
 
@@ -860,14 +925,14 @@ final class AvalynxBackend extends \BackendDiff
             return null;
         }
 
-        return $this->contactService->contactForMailbox($this->mailbox(), $addressId->toRfc4122());
+        return $this->contactService->contactForAccount($account, $addressId->toRfc4122());
     }
 
     private function messageFromServerId(mixed $folderid, mixed $id): ?Email
     {
-        $folder = $this->folderFromServerId(is_string($folderid) ? $folderid : '');
+        $folderContext = $this->folderContextFromServerId(is_string($folderid) ? $folderid : '');
 
-        if (null === $folder || !is_string($id)) {
+        if (null === $folderContext || !is_string($id)) {
             return null;
         }
 
@@ -877,7 +942,7 @@ final class AvalynxBackend extends \BackendDiff
             return null;
         }
 
-        return $this->mailFolderService->emailForFolder($this->mailbox(), $folder, $emailId);
+        return $this->mailFolderService->emailForFolder($folderContext['account'], $folderContext['folder'], $emailId);
     }
 
     /**
@@ -895,7 +960,7 @@ final class AvalynxBackend extends \BackendDiff
             return null;
         }
 
-        if (!$this->requireMailbox()) {
+        if (!$this->requireContext()) {
             return null;
         }
 
@@ -906,7 +971,16 @@ final class AvalynxBackend extends \BackendDiff
             return null;
         }
 
-        return $this->attachmentService->linkFor($this->mailbox(), $emailId, $attachmentId);
+        // The attachment belongs to the account of its message: the message
+        // pins the scope, the context decides whether it is visible.
+        $email = $this->entityManager->find(Email::class, $emailId);
+        $account = $email?->getAccount();
+
+        if (null === $account || null === $account->getId() || !$this->context()->hasAccount($account->getId())) {
+            return null;
+        }
+
+        return $this->attachmentService->linkFor($account, $emailId, $attachmentId);
     }
 
     private function refreshEmail(Email $email): Email
@@ -938,9 +1012,46 @@ final class AvalynxBackend extends \BackendDiff
         return null;
     }
 
-    private function contactFolderStatHash(Mailbox $mailbox): string
+    /**
+     * With more than one account the folder names would collide on the
+     * device ("Posteingang" several times), so every folder is prefixed with
+     * its account name. A single account stays unprefixed.
+     */
+    private function scopedName(Account $account, string $name): string
     {
-        $contacts = $this->contactService->contactsForMailbox($mailbox);
+        if (count($this->context()->getAccounts()) < 2) {
+            return $name;
+        }
+
+        return $account->getName().' / '.$name;
+    }
+
+    private function scopedFolder(string $serverId, string $displayName, int $type): \SyncFolder
+    {
+        $syncFolder = new \SyncFolder();
+        $syncFolder->serverid = $serverId;
+        $syncFolder->parentid = '0';
+        $syncFolder->displayname = $displayName;
+        $syncFolder->type = $type;
+
+        return $syncFolder;
+    }
+
+    private function calendarFolderStatHash(Account $account): string
+    {
+        $events = $this->calendarService->eventsForAccount($account);
+        $latest = 0;
+
+        foreach ($events as $event) {
+            $latest = max($latest, $event->getUpdatedAt()?->getTimestamp() ?? 0);
+        }
+
+        return md5('calendar|'.count($events).'|'.$latest);
+    }
+
+    private function contactFolderStatHash(Account $account): string
+    {
+        $contacts = $this->contactService->contactsForAccount($account);
         $latest = 0;
 
         foreach ($contacts as $contact) {
@@ -955,13 +1066,13 @@ final class AvalynxBackend extends \BackendDiff
         return md5($folder->getName().'|'.implode(',', $folder->getFunctions()).'|'.($folder->getUpdatedAt()?->getTimestamp() ?? 0));
     }
 
-    private function wasteBasketFolder(Mailbox $mailbox): Folder
+    private function wasteBasketFolder(Account $account): Folder
     {
-        $existing = array_find($this->mailFolderService->foldersForMailbox($mailbox), fn ($folder) => FolderMapping::WASTE_BASKET_NAME === $folder->getName());
+        $existing = array_find($this->mailFolderService->foldersForAccount($account), fn ($folder) => FolderMapping::WASTE_BASKET_NAME === $folder->getName());
         if (null !== $existing) {
             return $existing;
         }
 
-        return $this->folderService->ensureFolder($mailbox, FolderMapping::WASTE_BASKET_NAME);
+        return $this->folderService->ensureFolder($account, FolderMapping::WASTE_BASKET_NAME);
     }
 }

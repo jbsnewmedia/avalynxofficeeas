@@ -12,18 +12,18 @@ namespace AvalynxOfficeEas\Db\Model;
 use Doctrine\ORM\Mapping as ORM;
 
 #[ORM\Entity]
-#[ORM\Table(name: 'user_mailbox')]
-#[ORM\UniqueConstraint(name: 'uniq_user_mailbox', columns: ['user_id', 'mailbox_id'])]
-class UserMailbox
+#[ORM\Table(name: 'user_account')]
+#[ORM\UniqueConstraint(name: 'uniq_user_account', columns: ['user_id', 'account_id'])]
+class UserAccount
 {
     #[ORM\Id]
     #[ORM\ManyToOne(targetEntity: User::class)]
     #[ORM\JoinColumn(name: 'user_id', referencedColumnName: 'id')]
     private ?User $user = null;
     #[ORM\Id]
-    #[ORM\ManyToOne(targetEntity: Mailbox::class)]
-    #[ORM\JoinColumn(name: 'mailbox_id', referencedColumnName: 'id')]
-    private ?Mailbox $mailbox = null;
+    #[ORM\ManyToOne(targetEntity: Account::class)]
+    #[ORM\JoinColumn(name: 'account_id', referencedColumnName: 'id')]
+    private ?Account $account = null;
 
     public function getUser(): ?User
     {
@@ -37,14 +37,14 @@ class UserMailbox
         return $this;
     }
 
-    public function getMailbox(): ?Mailbox
+    public function getAccount(): ?Account
     {
-        return $this->mailbox;
+        return $this->account;
     }
 
-    public function setMailbox(?Mailbox $mailbox): self
+    public function setAccount(?Account $account): self
     {
-        $this->mailbox = $mailbox;
+        $this->account = $account;
 
         return $this;
     }

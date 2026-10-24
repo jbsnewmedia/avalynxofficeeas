@@ -12,16 +12,16 @@ namespace AvalynxOfficeEas\Db\Model;
 use Doctrine\ORM\Mapping as ORM;
 
 #[ORM\Entity]
-#[ORM\Table(name: 'mailbox_folder')]
-#[ORM\UniqueConstraint(name: 'uniq_mailbox_folder', columns: ['mailbox_id', 'folder_id'])]
+#[ORM\Table(name: 'account_folder')]
+#[ORM\UniqueConstraint(name: 'uniq_account_folder', columns: ['account_id', 'folder_id'])]
 #[ORM\HasLifecycleCallbacks]
-class FolderMailbox
+class FolderAccount
 {
     use TimestampableTrait;
     #[ORM\Id]
-    #[ORM\ManyToOne(targetEntity: Mailbox::class, inversedBy: 'folderLinks')]
-    #[ORM\JoinColumn(name: 'mailbox_id', referencedColumnName: 'id')]
-    private ?Mailbox $mailbox = null;
+    #[ORM\ManyToOne(targetEntity: Account::class, inversedBy: 'folderLinks')]
+    #[ORM\JoinColumn(name: 'account_id', referencedColumnName: 'id')]
+    private ?Account $account = null;
     #[ORM\Id]
     #[ORM\ManyToOne(targetEntity: Folder::class)]
     #[ORM\JoinColumn(name: 'folder_id', referencedColumnName: 'id')]
@@ -29,14 +29,14 @@ class FolderMailbox
     #[ORM\Column(name: 'sort_order', type: 'integer')]
     private int $sortOrder = 0;
 
-    public function getMailbox(): ?Mailbox
+    public function getAccount(): ?Account
     {
-        return $this->mailbox;
+        return $this->account;
     }
 
-    public function setMailbox(?Mailbox $mailbox): self
+    public function setAccount(?Account $account): self
     {
-        $this->mailbox = $mailbox;
+        $this->account = $account;
 
         return $this;
     }

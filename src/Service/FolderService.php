@@ -9,12 +9,12 @@ declare(strict_types=1);
 
 namespace AvalynxOfficeEas\Service;
 
+use AvalynxOfficeEas\Db\Model\Account;
 use AvalynxOfficeEas\Db\Model\Email;
 use AvalynxOfficeEas\Db\Model\EmailFolder;
 use AvalynxOfficeEas\Db\Model\Folder;
+use AvalynxOfficeEas\Db\Model\FolderAccount;
 use AvalynxOfficeEas\Db\Model\FolderFunction;
-use AvalynxOfficeEas\Db\Model\FolderMailbox;
-use AvalynxOfficeEas\Db\Model\Mailbox;
 use Doctrine\ORM\EntityManagerInterface;
 
 /**
@@ -76,10 +76,10 @@ class FolderService
     /**
      * @param array<string|FolderFunction> $functions
      */
-    public function ensureFolder(Mailbox $mailbox, string $folderName, int $sortOrder = 0, array $functions = []): Folder
+    public function ensureFolder(Account $account, string $folderName, int $sortOrder = 0, array $functions = []): Folder
     {
         $normalizedFunctions = self::normalizeFunctions($functions);
-        $folders = $this->foldersForMailbox($mailbox);
+        $folders = $this->foldersForAccount($account);
 
         if ([] !== $normalizedFunctions) {
             foreach ($folders as $folder) {
@@ -96,12 +96,12 @@ class FolderService
                     $folder->setFunctions($normalizedFunctions);
                     $changed = true;
                 }
-                if ($this->syncMailboxFolderLink($mailbox, $folder, $sortOrder)) {
+                if ($this->syncMailboxFolderLink($account, $folder, $sortOrder)) {
                     $changed = true;
                 }
-                if (in_array(FolderFunction::MAILBOX->value, $normalizedFunctions, true) && $mailbox->getInboxFolder() !== $folder) {
-                    $mailbox->setInboxFolder($folder);
-                    $this->em->persist($mailbox);
+                if (in_array(FolderFunction::MAILBOX->value, $normalizedFunctions, true) && $account->getInboxFolder() !== $folder) {
+                    $account->setInboxFolder($folder);
+                    $this->em->persist($account);
                     $changed = true;
                 }
                 if ($changed) {
@@ -121,12 +121,12 @@ class FolderService
                     $this->em->persist($f);
                     $changed = true;
                 }
-                if ($this->syncMailboxFolderLink($mailbox, $f, $sortOrder)) {
+                if ($this->syncMailboxFolderLink($account, $f, $sortOrder)) {
                     $changed = true;
                 }
-                if (in_array(FolderFunction::MAILBOX->value, $normalizedFunctions, true) && $mailbox->getInboxFolder() !== $f) {
-                    $mailbox->setInboxFolder($f);
-                    $this->em->persist($mailbox);
+                if (in_array(FolderFunction::MAILBOX->value, $normalizedFunctions, true) && $account->getInboxFolder() !== $f) {
+                    $account->setInboxFolder($f);
+                    $this->em->persist($account);
                     $changed = true;
                 }
                 if ($changed) {
@@ -142,33 +142,33 @@ class FolderService
         $folder->setFunctions($normalizedFunctions);
         $this->em->persist($folder);
         $this->em->flush();
-        $link = new FolderMailbox();
-        $link->setMailbox($mailbox);
+        $link = new FolderAccount();
+        $link->setAccount($account);
         $link->setFolder($folder);
         $link->setSortOrder($sortOrder);
         $this->em->persist($link);
         $this->em->flush();
         if (in_array(FolderFunction::MAILBOX->value, $normalizedFunctions, true)) {
-            $mailbox->setInboxFolder($folder);
-            $this->em->persist($mailbox);
+            $account->setInboxFolder($folder);
+            $this->em->persist($account);
             $this->em->flush();
         }
 
         return $folder;
     }
 
-    public function ensureSystemFolder(Mailbox $mailbox, FolderFunction|string $function): Folder
+    public function ensureSystemFolder(Account $account, FolderFunction|string $function): Folder
     {
         $normalizedFunction = self::normalizeFunctionValue($function);
-        $existing = $this->getFolderByFunction($mailbox, $normalizedFunction);
+        $existing = $this->getFolderByFunction($account, $normalizedFunction);
         if ($existing instanceof Folder) {
             $changed = false;
-            if ($this->syncMailboxFolderLink($mailbox, $existing, self::defaultSortOrder($normalizedFunction))) {
+            if ($this->syncMailboxFolderLink($account, $existing, self::defaultSortOrder($normalizedFunction))) {
                 $changed = true;
             }
-            if (FolderFunction::MAILBOX->value === $normalizedFunction && $mailbox->getInboxFolder() !== $existing) {
-                $mailbox->setInboxFolder($existing);
-                $this->em->persist($mailbox);
+            if (FolderFunction::MAILBOX->value === $normalizedFunction && $account->getInboxFolder() !== $existing) {
+                $account->setInboxFolder($existing);
+                $this->em->persist($account);
                 $changed = true;
             }
             if ($changed) {
@@ -179,17 +179,17 @@ class FolderService
         }
 
         return $this->ensureFolder(
-            $mailbox,
+            $account,
             self::defaultFolderName($normalizedFunction),
             self::defaultSortOrder($normalizedFunction),
             [$normalizedFunction],
         );
     }
 
-    public function getFolderByFunction(Mailbox $mailbox, FolderFunction|string $function): ?Folder
+    public function getFolderByFunction(Account $account, FolderFunction|string $function): ?Folder
     {
         $normalizedFunction = self::normalizeFunctionValue($function);
-        foreach ($this->foldersForMailbox($mailbox) as $folder) {
+        foreach ($this->foldersForAccount($account) as $folder) {
             if ($folder->hasFunction($normalizedFunction)) {
                 return $folder;
             }
@@ -214,8 +214,8 @@ class FolderService
 
     public function syncEmailSystemFolders(Email $email): void
     {
-        $mailbox = $email->getMailbox();
-        if (!$mailbox instanceof Mailbox) {
+        $account = $email->getAccount();
+        if (!$account instanceof Account) {
             return;
         }
 
@@ -235,7 +235,7 @@ class FolderService
         }
 
         foreach ($targetFunctions as $function) {
-            $folder = $this->ensureSystemFolder($mailbox, $function);
+            $folder = $this->ensureSystemFolder($account, $function);
             $this->assignEmailToFolder($email, $folder);
         }
     }
@@ -257,15 +257,15 @@ class FolderService
     /**
      * @return Folder[]
      */
-    private function foldersForMailbox(Mailbox $mailbox): array
+    private function foldersForAccount(Account $account): array
     {
         /** @var list<Folder> $result */
         $result = $this->em->createQueryBuilder()
             ->select('f')
             ->from(Folder::class, 'f')
-            ->join(FolderMailbox::class, 'fl', 'WITH', 'fl.folder = f')
-            ->where('fl.mailbox = :mailbox')
-            ->setParameter('mailbox', $mailbox)
+            ->join(FolderAccount::class, 'fl', 'WITH', 'fl.folder = f')
+            ->where('fl.account = :account')
+            ->setParameter('account', $account)
             ->orderBy('fl.sortOrder', 'ASC')
             ->addOrderBy('f.name', 'ASC')
             ->getQuery()
@@ -300,9 +300,9 @@ class FolderService
         return 'sent' === $value ? FolderFunction::OUTBOX->value : $value;
     }
 
-    private function syncMailboxFolderLink(Mailbox $mailbox, Folder $folder, int $sortOrder): bool
+    private function syncMailboxFolderLink(Account $account, Folder $folder, int $sortOrder): bool
     {
-        foreach ($mailbox->getFolderLinks() as $link) {
+        foreach ($account->getFolderLinks() as $link) {
             if ($link->getFolder() !== $folder) {
                 continue;
             }

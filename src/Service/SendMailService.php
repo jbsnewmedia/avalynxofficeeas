@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace AvalynxOfficeEas\Service;
 
+use AvalynxOfficeEas\Db\Model\Account;
 use AvalynxOfficeEas\Db\Model\Address;
 use AvalynxOfficeEas\Db\Model\Attachment;
 use AvalynxOfficeEas\Db\Model\Body;
@@ -18,7 +19,6 @@ use AvalynxOfficeEas\Db\Model\EmailAddressLink;
 use AvalynxOfficeEas\Db\Model\EmailAddressType;
 use AvalynxOfficeEas\Db\Model\EmailAttachmentLink;
 use AvalynxOfficeEas\Db\Model\EmailBodyLink;
-use AvalynxOfficeEas\Db\Model\Mailbox;
 use AvalynxOfficeEas\Licensing\LicenseState;
 use AvalynxOfficeEas\Mail\AttachmentStorage;
 use Doctrine\ORM\EntityManagerInterface;
@@ -46,7 +46,7 @@ final readonly class SendMailService
         $this->addressRepository = $this->entityManager->getRepository(Address::class);
     }
 
-    public function send(\SyncSendMail $sendMail, Mailbox $mailbox): bool
+    public function send(\SyncSendMail $sendMail, Account $account): bool
     {
         $mime = is_string($sendMail->mime) ? $sendMail->mime : '';
 
@@ -56,7 +56,7 @@ final readonly class SendMailService
 
         try {
             $clientKey = is_string($sendMail->clientid) ? $sendMail->clientid : 'eas';
-            $email = $this->convertMimeToEmail($mime, $mailbox, $clientKey);
+            $email = $this->convertMimeToEmail($mime, $account, $clientKey);
         } catch (\Throwable $throwable) {
             throw new \RuntimeException(sprintf('Unable to parse message: %s', $throwable->getMessage()), 0, $throwable);
         }
@@ -96,11 +96,11 @@ final readonly class SendMailService
     /**
      * @throws \Throwable when the message cannot be parsed
      */
-    private function convertMimeToEmail(string $mime, Mailbox $mailbox, string $clientKey): Email
+    private function convertMimeToEmail(string $mime, Account $account, string $clientKey): Email
     {
         $message = new \Laminas\Mail\Storage\Message(['raw' => $mime]);
         $email = new Email();
-        $email->setMailbox($mailbox);
+        $email->setAccount($account);
         $email->setIsOutgoing(true)->setIsRead(true);
         $email->setImportKey('eas|'.$clientKey);
         $email->setContentHash(hash('sha256', $mime));

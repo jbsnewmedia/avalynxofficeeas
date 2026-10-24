@@ -9,9 +9,9 @@ declare(strict_types=1);
 
 namespace AvalynxOfficeEas\Service;
 
+use AvalynxOfficeEas\Db\Model\Account;
+use AvalynxOfficeEas\Db\Model\AccountAddress;
 use AvalynxOfficeEas\Db\Model\Address;
-use AvalynxOfficeEas\Db\Model\Mailbox;
-use AvalynxOfficeEas\Db\Model\MailboxAddress;
 use AvalynxOfficeEas\Licensing\LicenseState;
 use Doctrine\ORM\EntityManagerInterface;
 
@@ -19,7 +19,7 @@ use Doctrine\ORM\EntityManagerInterface;
  * Reads and mutates the contacts that are exposed to EAS clients.
  *
  * Contacts are addresses flagged as contacts and linked to the synchronized
- * mailbox; the underlying address pool stays shared with the mail module.
+ * account; the underlying address pool stays shared with the mail module.
  */
 final readonly class ContactService
 {
@@ -33,11 +33,11 @@ final readonly class ContactService
     /**
      * @return Address[]
      */
-    public function contactsForMailbox(Mailbox $mailbox): array
+    public function contactsForAccount(Account $account): array
     {
         $contacts = [];
 
-        foreach ($this->addressLinksFor($mailbox) as $link) {
+        foreach ($this->addressLinksFor($account) as $link) {
             $address = $this->entityManager->find(Address::class, $link['address_id']);
 
             if (null !== $address && $address->isContact()) {
@@ -50,9 +50,9 @@ final readonly class ContactService
         return $contacts;
     }
 
-    public function contactForMailbox(Mailbox $mailbox, string $addressId): ?Address
+    public function contactForAccount(Account $account, string $addressId): ?Address
     {
-        foreach ($this->contactsForMailbox($mailbox) as $address) {
+        foreach ($this->contactsForAccount($account) as $address) {
             if ($address->getId()?->toRfc4122() === strtolower($addressId)) {
                 return $address;
             }
@@ -61,7 +61,7 @@ final readonly class ContactService
         return null;
     }
 
-    public function create(Mailbox $mailbox, \SyncContact $contact): Address
+    public function create(Account $account, \SyncContact $contact): Address
     {
         $this->licenseState->assertMutationAllowed('CONTACT_WRITE');
         $address = new Address();
@@ -69,7 +69,7 @@ final readonly class ContactService
         $this->contactMapper->applySyncContact($address, $contact);
         $address->setIsContact(true);
 
-        $this->linkAddress($mailbox, $address);
+        $this->linkAddress($account, $address);
 
         $this->entityManager->persist($address);
         $this->entityManager->flush();
@@ -87,9 +87,9 @@ final readonly class ContactService
     public function delete(Address $address): void
     {
         $this->licenseState->assertMutationAllowed('CONTACT_WRITE');
-        // The mailbox links are not cascade-removed with the address; load
+        // The account links are not cascade-removed with the address; load
         // them explicitly so the rows and the in-memory state stay in sync.
-        foreach ($this->entityManager->getRepository(MailboxAddress::class)->findBy(['address' => $address]) as $link) {
+        foreach ($this->entityManager->getRepository(AccountAddress::class)->findBy(['address' => $address]) as $link) {
             $this->entityManager->remove($link);
         }
 
@@ -100,18 +100,18 @@ final readonly class ContactService
     /**
      * @return list<array<string, mixed>>
      */
-    private function addressLinksFor(Mailbox $mailbox): array
+    private function addressLinksFor(Account $account): array
     {
         return $this->entityManager->getConnection()->fetchAllAssociative(
-            'SELECT address_id FROM mailbox_address WHERE mailbox_id = :mailboxId',
-            ['mailboxId' => $mailbox->getId()?->toRfc4122()],
+            'SELECT address_id FROM account_address WHERE account_id = :accountId',
+            ['accountId' => $account->getId()?->toRfc4122()],
         );
     }
 
-    private function linkAddress(Mailbox $mailbox, Address $address): void
+    private function linkAddress(Account $account, Address $address): void
     {
-        $link = new MailboxAddress();
-        $link->setMailbox($mailbox);
+        $link = new AccountAddress();
+        $link->setAccount($account);
         $link->setAddress($address);
         $this->entityManager->persist($link);
     }

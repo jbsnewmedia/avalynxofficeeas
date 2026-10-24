@@ -1,14 +1,17 @@
 # avalynxofficeeas
 
-**ActiveSync extension for [AvalynxOffice](https://github.com/jbsnewmedia/avalynxoffice)**
+**AvalynxOfficeEAS — ActiveSync extension for [AvalynxOffice](https://github.com/jbsnewmedia/avalynxoffice)**
 (core repository: `avalynxoffice`) — Exchange ActiveSync (EAS) device
 synchronization based on [Z-Push](https://github.com/Z-Hub/Z-Push).
+
+> The repository and package name are intentionally lowercase
+> (`avalynxofficeeas`); the product name is **AvalynxOfficeEAS**.
 
 License: **AGPL-3.0** (see `LICENSE` and `NOTICE.md`).
 
 ## What it is
 
-`avalynxofficeeas` lets ActiveSync-compatible devices (iOS, Android, Outlook)
+AvalynxOfficeEAS lets ActiveSync-compatible devices (iOS, Android, Outlook)
 synchronize mail, contacts and calendars with an AvalynxOffice installation.
 
 It is an **independent extension, not part of avalynxoffice**:
@@ -23,6 +26,20 @@ It is an **independent extension, not part of avalynxoffice**:
   (`app_user.last_auth_at`), so sync-only accounts keep their
   [Active Seat](https://github.com/jbsnewmedia/avalynxoffice) (APL 1.0),
 - needs no daemon: ActiveSync is request-driven (HTTP).
+
+## Login and account scope
+
+The device logs in with an **application user** — the same e-mail address and
+password as the AvalynxOffice web login. Mailbox (account) or alias addresses
+are not accepted as usernames: a device session always belongs to a user.
+
+The user receives **every account assigned to them** in the office: all mail
+folders plus the contacts and calendar folder of each account are
+synchronized. When a user has more than one account, each folder is prefixed
+with its account name (e.g. `Info / Posteingang`) so the device can tell them
+apart. Replies and forwards are filed under the account of the source
+message; fresh messages go to the user's primary account (first account,
+sorted by e-mail address).
 
 ## Status
 

@@ -15,12 +15,12 @@ use Symfony\Component\Uid\Uuid;
 use Symfony\Component\Uid\UuidV7;
 
 /**
- * Read-only mapping of the mailbox table (owned by the AvalynxOffice core).
+ * Read-only mapping of the account table (owned by the AvalynxOffice core).
  */
 #[ORM\Entity]
-#[ORM\Table(name: 'mailbox')]
+#[ORM\Table(name: 'account')]
 #[ORM\HasLifecycleCallbacks]
-class Mailbox
+class Account
 {
     use TimestampableTrait;
     #[ORM\Id]
@@ -34,9 +34,9 @@ class Mailbox
     #[ORM\JoinColumn(name: 'inbox_folder_id', referencedColumnName: 'id', nullable: true)]
     private ?Folder $inboxFolder = null;
     /**
-     * @var \Doctrine\Common\Collections\Collection<int, FolderMailbox>&iterable<FolderMailbox>
+     * @var \Doctrine\Common\Collections\Collection<int, FolderAccount>&iterable<FolderAccount>
      */
-    #[ORM\OneToMany(mappedBy: 'mailbox', targetEntity: FolderMailbox::class)]
+    #[ORM\OneToMany(mappedBy: 'account', targetEntity: FolderAccount::class)]
     private iterable $folderLinks;
 
     public function __construct()
@@ -87,7 +87,7 @@ class Mailbox
     }
 
     /**
-     * @return iterable<FolderMailbox>
+     * @return iterable<FolderAccount>
      */
     public function getFolderLinks(): iterable
     {

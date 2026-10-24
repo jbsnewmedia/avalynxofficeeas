@@ -58,9 +58,9 @@ class Email
     private ?string $messageId = null;
     #[ORM\Column(name: 'import_key', type: 'string', length: 190, unique: true, nullable: true)]
     private ?string $importKey = null;
-    #[ORM\ManyToOne(targetEntity: Mailbox::class)]
-    #[ORM\JoinColumn(name: 'mailbox_id', referencedColumnName: 'id', nullable: true)]
-    private ?Mailbox $mailbox = null;
+    #[ORM\ManyToOne(targetEntity: Account::class)]
+    #[ORM\JoinColumn(name: 'account_id', referencedColumnName: 'id', nullable: true)]
+    private ?Account $account = null;
     /**
      * @var Collection<int, EmailFolder>
      */
@@ -276,14 +276,14 @@ class Email
         return $this;
     }
 
-    public function getMailbox(): ?Mailbox
+    public function getAccount(): ?Account
     {
-        return $this->mailbox;
+        return $this->account;
     }
 
-    public function setMailbox(?Mailbox $mailbox): self
+    public function setAccount(?Account $account): self
     {
-        $this->mailbox = $mailbox;
+        $this->account = $account;
 
         return $this;
     }

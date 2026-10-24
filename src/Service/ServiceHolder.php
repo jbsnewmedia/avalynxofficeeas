@@ -27,7 +27,7 @@ final class ServiceHolder
 
     private function __construct(
         private readonly string $projectDir,
-        private readonly MailboxResolver $mailboxResolver,
+        private readonly UserResolver $userResolver,
         private readonly MailFolderService $mailFolderService,
         private readonly MessageMapper $messageMapper,
         private readonly SendMailService $sendMailService,
@@ -65,7 +65,7 @@ final class ServiceHolder
         $messageMapper = new MessageMapper();
         $folderService = new FolderService($entityManager);
         $mailFolderService = new MailFolderService($entityManager);
-        $mailboxResolver = new MailboxResolver($entityManager);
+        $userResolver = new UserResolver($entityManager);
         $mutationService = new MessageMutationService($entityManager, $folderService, $licenseState);
         $contactService = new ContactService($entityManager, $contactMapper, $licenseState);
         $calendarService = new CalendarService($entityManager, $calendarMapper, $licenseState);
@@ -80,7 +80,7 @@ final class ServiceHolder
 
         self::$instance = new self(
             $projectDir,
-            $mailboxResolver,
+            $userResolver,
             $mailFolderService,
             $messageMapper,
             $sendMailService,
@@ -118,9 +118,9 @@ final class ServiceHolder
         return $this->projectDir;
     }
 
-    public function getMailboxResolver(): MailboxResolver
+    public function getUserResolver(): UserResolver
     {
-        return $this->mailboxResolver;
+        return $this->userResolver;
     }
 
     public function getMailFolderService(): MailFolderService

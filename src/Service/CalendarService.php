@@ -9,8 +9,8 @@ declare(strict_types=1);
 
 namespace AvalynxOfficeEas\Service;
 
+use AvalynxOfficeEas\Db\Model\Account;
 use AvalynxOfficeEas\Db\Model\CalendarEvent;
-use AvalynxOfficeEas\Db\Model\Mailbox;
 use AvalynxOfficeEas\Licensing\LicenseState;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Uid\UuidV7;
@@ -30,27 +30,27 @@ final readonly class CalendarService
     /**
      * @return list<CalendarEvent>
      */
-    public function eventsForMailbox(Mailbox $mailbox): array
+    public function eventsForAccount(Account $account): array
     {
         /** @var list<CalendarEvent> $events */
         $events = $this->entityManager->getRepository(CalendarEvent::class)->findBy(
-            ['mailbox' => $mailbox],
+            ['account' => $account],
             ['startAt' => 'ASC'],
         );
 
         return $events;
     }
 
-    public function eventForMailbox(Mailbox $mailbox, UuidV7 $id): ?CalendarEvent
+    public function eventForAccount(Account $account, UuidV7 $id): ?CalendarEvent
     {
         $event = $this->entityManager->find(CalendarEvent::class, $id);
 
         if (
             null === $event
-            || null === $event->getMailbox()
-            || null === $event->getMailbox()->getId()
-            || null === $mailbox->getId()
-            || !$event->getMailbox()->getId()->equals($mailbox->getId())
+            || null === $event->getAccount()
+            || null === $event->getAccount()->getId()
+            || null === $account->getId()
+            || !$event->getAccount()->getId()->equals($account->getId())
         ) {
             return null;
         }
@@ -58,7 +58,7 @@ final readonly class CalendarService
         return $event;
     }
 
-    public function create(Mailbox $mailbox, \SyncAppointment $appointment): CalendarEvent
+    public function create(Account $account, \SyncAppointment $appointment): CalendarEvent
     {
         $this->licenseState->assertMutationAllowed('CALENDAR_WRITE');
         $event = new CalendarEvent();
@@ -67,7 +67,7 @@ final readonly class CalendarService
         $event->setTitle('');
         $event->setStartAt(new \DateTimeImmutable());
         $this->calendarMapper->applySyncAppointment($event, $appointment);
-        $event->setMailbox($mailbox);
+        $event->setAccount($account);
 
         $this->entityManager->persist($event);
         $this->entityManager->flush();

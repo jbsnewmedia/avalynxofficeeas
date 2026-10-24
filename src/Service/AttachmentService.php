@@ -9,8 +9,8 @@ declare(strict_types=1);
 
 namespace AvalynxOfficeEas\Service;
 
+use AvalynxOfficeEas\Db\Model\Account;
 use AvalynxOfficeEas\Db\Model\EmailAttachmentLink;
-use AvalynxOfficeEas\Db\Model\Mailbox;
 use AvalynxOfficeEas\Mail\AttachmentStorage;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Uid\UuidV7;
@@ -26,19 +26,19 @@ final readonly class AttachmentService
     ) {
     }
 
-    public function linkFor(Mailbox $mailbox, UuidV7 $emailId, UuidV7 $attachmentId): ?EmailAttachmentLink
+    public function linkFor(Account $account, UuidV7 $emailId, UuidV7 $attachmentId): ?EmailAttachmentLink
     {
         $query = $this->entityManager->createQueryBuilder()
             ->select('eal')
             ->from(EmailAttachmentLink::class, 'eal')
             ->join('eal.email', 'e')
-            ->join('e.mailbox', 'm')
+            ->join('e.account', 'm')
             ->where('e.id = :emailId')
             ->andWhere('eal.attachment = :attachmentId')
-            ->andWhere('m.id = :mailboxId')
+            ->andWhere('m.id = :accountId')
             ->setParameter('emailId', $emailId)
             ->setParameter('attachmentId', $attachmentId)
-            ->setParameter('mailboxId', $mailbox->getId())
+            ->setParameter('accountId', $account->getId())
             ->setMaxResults(1)
             ->getQuery();
 

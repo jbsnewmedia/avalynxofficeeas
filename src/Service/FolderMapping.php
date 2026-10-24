@@ -40,14 +40,14 @@ final class FolderMapping
         ];
     }
 
-    public function folderServerId(UuidV7 $mailboxId, UuidV7 $folderId): string
+    public function folderServerId(UuidV7 $accountId, UuidV7 $folderId): string
     {
-        return base64_encode(self::ID_PREFIX.self::SEPARATOR.$mailboxId->toRfc4122().self::SEPARATOR.$folderId->toRfc4122());
+        return base64_encode(self::ID_PREFIX.self::SEPARATOR.$accountId->toRfc4122().self::SEPARATOR.$folderId->toRfc4122());
     }
 
-    public function contactServerId(UuidV7 $mailboxId): string
+    public function contactServerId(UuidV7 $accountId): string
     {
-        return base64_encode(self::CONTACTS_PREFIX.self::SEPARATOR.$mailboxId->toRfc4122());
+        return base64_encode(self::CONTACTS_PREFIX.self::SEPARATOR.$accountId->toRfc4122());
     }
 
     public function decodeContact(string $serverId): ?UuidV7
@@ -55,9 +55,9 @@ final class FolderMapping
         return $this->decodeScopedId($serverId, self::CONTACTS_PREFIX);
     }
 
-    public function calendarServerId(UuidV7 $mailboxId): string
+    public function calendarServerId(UuidV7 $accountId): string
     {
-        return base64_encode(self::CALENDAR_PREFIX.self::SEPARATOR.$mailboxId->toRfc4122());
+        return base64_encode(self::CALENDAR_PREFIX.self::SEPARATOR.$accountId->toRfc4122());
     }
 
     public function decodeCalendar(string $serverId): ?UuidV7

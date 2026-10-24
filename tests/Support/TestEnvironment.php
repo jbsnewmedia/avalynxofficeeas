@@ -10,6 +10,8 @@ declare(strict_types=1);
 namespace AvalynxOfficeEas\Tests\Support;
 
 use AvalynxOfficeEas\Db\Database;
+use AvalynxOfficeEas\Db\Model\Account;
+use AvalynxOfficeEas\Db\Model\AccountAddress;
 use AvalynxOfficeEas\Db\Model\Address;
 use AvalynxOfficeEas\Db\Model\Body;
 use AvalynxOfficeEas\Db\Model\BodyContentType;
@@ -18,13 +20,11 @@ use AvalynxOfficeEas\Db\Model\Email;
 use AvalynxOfficeEas\Db\Model\EmailBodyLink;
 use AvalynxOfficeEas\Db\Model\EmailFolder;
 use AvalynxOfficeEas\Db\Model\Folder;
+use AvalynxOfficeEas\Db\Model\FolderAccount;
 use AvalynxOfficeEas\Db\Model\FolderFunction;
-use AvalynxOfficeEas\Db\Model\FolderMailbox;
 use AvalynxOfficeEas\Db\Model\LicenseState;
-use AvalynxOfficeEas\Db\Model\Mailbox;
-use AvalynxOfficeEas\Db\Model\MailboxAddress;
 use AvalynxOfficeEas\Db\Model\User;
-use AvalynxOfficeEas\Db\Model\UserMailbox;
+use AvalynxOfficeEas\Db\Model\UserAccount;
 use AvalynxOfficeEas\Service\EndpointService;
 use AvalynxOfficeEas\Service\ServiceHolder;
 use Doctrine\ORM\EntityManagerInterface;
@@ -120,17 +120,17 @@ trait TestEnvironment
     }
 
     /**
-     * Seeds: user (password "admin") + mailbox with an inbox folder, one
+     * Seeds: user (password "admin") + account with an inbox folder, one
      * unread email, one contact and one calendar event, COMMUNITY license.
      *
-     * @return array{user: User, mailbox: Mailbox, folder: Folder, email: Email, contact: Address, event: CalendarEvent}
+     * @return array{user: User, account: Account, folder: Folder, email: Email, contact: Address, event: CalendarEvent}
      */
     protected static function seed(): array
     {
         $em = self::entityManager();
 
         $user = new User();
-        $user->setEmail('info@example.com');
+        $user->setEmail('admin@example.com');
         $user->setPassword(password_hash('admin', PASSWORD_BCRYPT));
         $em->persist($user);
 
@@ -139,20 +139,20 @@ trait TestEnvironment
         $folder->setFunctions([FolderFunction::INBOX->value]);
         $em->persist($folder);
 
-        $mailbox = new Mailbox();
-        $mailbox->setName('Info');
-        $mailbox->setEmail('info@example.com');
-        $mailbox->setInboxFolder($folder);
-        $em->persist($mailbox);
+        $account = new Account();
+        $account->setName('Info');
+        $account->setEmail('info@example.com');
+        $account->setInboxFolder($folder);
+        $em->persist($account);
 
-        $em->persist(new UserMailbox()->setUser($user)->setMailbox($mailbox));
-        $em->persist(new FolderMailbox()->setMailbox($mailbox)->setFolder($folder)->setSortOrder(0));
+        $em->persist(new UserAccount()->setUser($user)->setAccount($account));
+        $em->persist(new FolderAccount()->setAccount($account)->setFolder($folder)->setSortOrder(0));
 
         $email = new Email();
         $email->setSubject('Incoming message');
         $email->setPreviewBody('Body');
         $email->setReceivedAt(new \DateTimeImmutable('-1 hour'));
-        $email->setMailbox($mailbox);
+        $email->setAccount($account);
         $emailFolder = new EmailFolder();
         $emailFolder->setFolder($folder);
         $email->addEmailFolder($emailFolder);
@@ -172,12 +172,12 @@ trait TestEnvironment
         $contact->setName('Contact');
         $contact->setIsContact(true);
         $em->persist($contact);
-        $em->persist(new MailboxAddress()->setMailbox($mailbox)->setAddress($contact));
+        $em->persist(new AccountAddress()->setAccount($account)->setAddress($contact));
 
         $event = new CalendarEvent();
         $event->setTitle('Review');
         $event->setStartAt(new \DateTimeImmutable('+1 day'));
-        $event->setMailbox($mailbox);
+        $event->setAccount($account);
         $em->persist($event);
 
         $state = new LicenseState();
@@ -187,12 +187,12 @@ trait TestEnvironment
         $em->flush();
         $em->clear();
 
-        /** @var Mailbox $freshMailbox */
-        $freshMailbox = $em->find(Mailbox::class, $mailbox->getId());
+        /** @var Account $freshAccount */
+        $freshAccount = $em->find(Account::class, $account->getId());
 
         return [
             'user' => $user,
-            'mailbox' => $freshMailbox,
+            'account' => $freshAccount,
             'folder' => $folder,
             'email' => $email,
             'contact' => $contact,

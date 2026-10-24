@@ -1,4 +1,7 @@
-# Project Instructions — avalynxofficeeas
+# Project Instructions — AvalynxOfficeEAS
+
+> Repository/package name: `avalynxofficeeas` (lowercase, intentionally).
+> Product name in docs and UI: **AvalynxOfficeEAS**.
 
 ## Project context
 

@@ -9,9 +9,9 @@ declare(strict_types=1);
 
 namespace AvalynxOfficeEas\Service;
 
+use AvalynxOfficeEas\Db\Model\Account;
 use AvalynxOfficeEas\Db\Model\Email;
 use AvalynxOfficeEas\Db\Model\Folder;
-use AvalynxOfficeEas\Db\Model\Mailbox;
 use AvalynxOfficeEas\Licensing\LicenseState;
 use Doctrine\ORM\EntityManagerInterface;
 
@@ -58,10 +58,10 @@ final readonly class MessageMutationService
         $this->entityManager->flush();
     }
 
-    public function emptyFolder(Mailbox $mailbox, Folder $folder): int
+    public function emptyFolder(Account $account, Folder $folder): int
     {
         $this->licenseState->assertMutationAllowed('MAIL_DELETE');
-        $emails = $this->emailsForFolder($mailbox, $folder);
+        $emails = $this->emailsForFolder($account, $folder);
 
         foreach ($emails as $email) {
             $this->removeLinks($email);
@@ -91,16 +91,16 @@ final readonly class MessageMutationService
     /**
      * @return list<Email>
      */
-    private function emailsForFolder(Mailbox $mailbox, Folder $folder): array
+    private function emailsForFolder(Account $account, Folder $folder): array
     {
         $query = $this->entityManager->createQueryBuilder()
             ->select('e')
             ->from(Email::class, 'e')
             ->join('e.emailFolders', 'ef')
             ->where('ef.folder = :folder')
-            ->andWhere('e.mailbox = :mailbox')
+            ->andWhere('e.account = :account')
             ->setParameter('folder', $folder)
-            ->setParameter('mailbox', $mailbox)
+            ->setParameter('account', $account)
             ->getQuery();
 
         /** @var list<Email> $result */

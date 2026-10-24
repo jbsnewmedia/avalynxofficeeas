@@ -26,7 +26,7 @@ final class AvalynxBackendTest extends TestCase
 
     private AvalynxBackend $backend;
 
-    /** @var array{user: \AvalynxOfficeEas\Db\Model\User, mailbox: \AvalynxOfficeEas\Db\Model\Mailbox, folder: \AvalynxOfficeEas\Db\Model\Folder, email: Email, contact: \AvalynxOfficeEas\Db\Model\Address, event: \AvalynxOfficeEas\Db\Model\CalendarEvent} */
+    /** @var array{user: \AvalynxOfficeEas\Db\Model\User, account: \AvalynxOfficeEas\Db\Model\Account, folder: \AvalynxOfficeEas\Db\Model\Folder, email: Email, contact: \AvalynxOfficeEas\Db\Model\Address, event: \AvalynxOfficeEas\Db\Model\CalendarEvent} */
     private array $fixture;
 
     protected function setUp(): void
@@ -34,7 +34,7 @@ final class AvalynxBackendTest extends TestCase
         self::bootEnvironment();
         $this->fixture = self::seed();
         $this->backend = new AvalynxBackend();
-        self::assertTrue($this->backend->Logon('info@example.com', '', 'admin'));
+        self::assertTrue($this->backend->Logon('admin@example.com', '', 'admin'));
     }
 
     protected function tearDown(): void
@@ -44,8 +44,15 @@ final class AvalynxBackendTest extends TestCase
 
     public function testLogonRejectsWrongCredentials(): void
     {
-        self::assertFalse($this->backend->Logon('info@example.com', '', 'wrong'));
+        self::assertFalse($this->backend->Logon('admin@example.com', '', 'wrong'));
         self::assertFalse($this->backend->Logon('nobody@example.com', '', 'admin'));
+    }
+
+    public function testLogonRejectsAccountAddressAsUsername(): void
+    {
+        // The account (mailbox) address is not a username: devices log in
+        // with the application user only.
+        self::assertFalse($this->backend->Logon('info@example.com', '', 'admin'));
     }
 
     public function testLogonRecordsSeatActivity(): void
@@ -72,7 +79,7 @@ final class AvalynxBackendTest extends TestCase
         self::em()->clear();
 
         $backend = new AvalynxBackend();
-        self::assertTrue($backend->Logon('info@example.com', '', 'admin'));
+        self::assertTrue($backend->Logon('admin@example.com', '', 'admin'));
 
         self::em()->clear();
         $reloaded = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
@@ -93,7 +100,7 @@ final class AvalynxBackendTest extends TestCase
         self::em()->clear();
 
         $backend = new AvalynxBackend();
-        self::assertTrue($backend->Logon('info@example.com', '', 'admin'));
+        self::assertTrue($backend->Logon('admin@example.com', '', 'admin'));
 
         $reloaded = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
         self::assertNotNull($reloaded);
@@ -117,7 +124,7 @@ final class AvalynxBackendTest extends TestCase
         self::em()->clear();
 
         $backend = new AvalynxBackend();
-        self::assertFalse($backend->Logon('info@example.com', '', 'wrong'));
+        self::assertFalse($backend->Logon('admin@example.com', '', 'wrong'));
 
         $reloaded = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
         self::assertNotNull($reloaded);
@@ -139,7 +146,7 @@ final class AvalynxBackendTest extends TestCase
         $user->setActive(false);
         self::em()->flush();
 
-        self::assertFalse($this->backend->Logon('info@example.com', '', 'admin'));
+        self::assertFalse($this->backend->Logon('admin@example.com', '', 'admin'));
     }
 
     public function testGetFolderReturnsInboxType(): void
@@ -279,7 +286,7 @@ final class AvalynxBackendTest extends TestCase
 
         // Sending is stored with a license hold instead of being queued. A
         // new request re-authenticates after the clear.
-        self::assertTrue($this->backend->Logon('info@example.com', '', 'admin'));
+        self::assertTrue($this->backend->Logon('admin@example.com', '', 'admin'));
         $sendMail = new \SyncSendMail();
         $sendMail->clientid = 'held-client-1';
         $sendMail->mime = "From: info@example.com\r\nTo: r@example.com\r\nSubject: Held\r\nContent-Type: text/plain\r\n\r\nHeld body";
@@ -309,21 +316,72 @@ final class AvalynxBackendTest extends TestCase
         self::assertSame('Papierkorb', $folder->displayname);
     }
 
+    public function testGetFolderListContainsEveryAssignedAccount(): void
+    {
+        // A second account assigned to the same user doubles the folder set.
+        $user = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $this->fixture['user']->getId());
+        self::assertNotNull($user);
+
+        $second = new \AvalynxOfficeEas\Db\Model\Account();
+        $second->setName('Office');
+        $second->setEmail('office@example.com');
+        self::em()->persist($second);
+
+        $secondFolder = new \AvalynxOfficeEas\Db\Model\Folder();
+        $secondFolder->setName('Posteingang');
+        $secondFolder->setFunctions([\AvalynxOfficeEas\Db\Model\FolderFunction::INBOX->value]);
+        self::em()->persist($secondFolder);
+
+        $secondAccountId = $second->getId();
+        $secondFolderId = $secondFolder->getId();
+        \assert(null !== $secondAccountId && null !== $secondFolderId);
+
+        self::em()->persist(
+            new \AvalynxOfficeEas\Db\Model\UserAccount()->setUser($user)->setAccount($second),
+        );
+        self::em()->persist(
+            new \AvalynxOfficeEas\Db\Model\FolderAccount()->setAccount($second)->setFolder($secondFolder)->setSortOrder(0),
+        );
+        self::em()->flush();
+        self::em()->clear();
+
+        self::assertTrue($this->backend->Logon('admin@example.com', '', 'admin'));
+
+        $folders = $this->backend->GetFolderList();
+
+        self::assertIsArray($folders);
+        // 2 mail folders + 2 contact folders + 2 calendar folders
+        self::assertCount(6, $folders);
+
+        $mapping = new \AvalynxOfficeEas\Service\FolderMapping();
+        $secondInboxId = $mapping->folderServerId($secondAccountId, $secondFolderId);
+        $folder = $this->backend->GetFolder($secondInboxId);
+
+        self::assertInstanceOf(\SyncFolder::class, $folder);
+        // Multi-account: the folder name is prefixed with the account name.
+        self::assertSame('Office / Posteingang', $folder->displayname);
+
+        // The single-account fixture folder is prefixed with its account as well.
+        $first = $this->backend->GetFolder($this->inboxServerId());
+        self::assertInstanceOf(\SyncFolder::class, $first);
+        self::assertSame('Info / Posteingang', $first->displayname);
+    }
+
     private function inboxServerId(): string
     {
-        $mailboxId = $this->fixture['mailbox']->getId();
+        $accountId = $this->fixture['account']->getId();
         $folderId = $this->fixture['folder']->getId();
-        \assert(null !== $mailboxId && null !== $folderId);
+        \assert(null !== $accountId && null !== $folderId);
 
-        return new \AvalynxOfficeEas\Service\FolderMapping()->folderServerId($mailboxId, $folderId);
+        return new \AvalynxOfficeEas\Service\FolderMapping()->folderServerId($accountId, $folderId);
     }
 
     private function contactServerId(): string
     {
-        $mailboxId = $this->fixture['mailbox']->getId();
-        \assert(null !== $mailboxId);
+        $accountId = $this->fixture['account']->getId();
+        \assert(null !== $accountId);
 
-        return new \AvalynxOfficeEas\Service\FolderMapping()->contactServerId($mailboxId);
+        return new \AvalynxOfficeEas\Service\FolderMapping()->contactServerId($accountId);
     }
 
     private function contentParameters(): \ContentParameters

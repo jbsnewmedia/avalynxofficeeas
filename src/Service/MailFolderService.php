@@ -9,10 +9,10 @@ declare(strict_types=1);
 
 namespace AvalynxOfficeEas\Service;
 
+use AvalynxOfficeEas\Db\Model\Account;
 use AvalynxOfficeEas\Db\Model\Email;
 use AvalynxOfficeEas\Db\Model\Folder;
-use AvalynxOfficeEas\Db\Model\FolderMailbox;
-use AvalynxOfficeEas\Db\Model\Mailbox;
+use AvalynxOfficeEas\Db\Model\FolderAccount;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Uid\UuidV7;
 
@@ -28,14 +28,14 @@ final readonly class MailFolderService
     /**
      * @return Folder[]
      */
-    public function foldersForMailbox(Mailbox $mailbox): array
+    public function foldersForAccount(Account $account): array
     {
         $query = $this->entityManager->createQueryBuilder()
             ->select('f')
             ->from(Folder::class, 'f')
-            ->join(FolderMailbox::class, 'fl', 'WITH', 'fl.folder = f')
-            ->where('fl.mailbox = :mailbox')
-            ->setParameter('mailbox', $mailbox)
+            ->join(FolderAccount::class, 'fl', 'WITH', 'fl.folder = f')
+            ->where('fl.account = :account')
+            ->setParameter('account', $account)
             ->orderBy('fl.sortOrder', 'ASC')
             ->addOrderBy('f.name', 'ASC')
             ->getQuery();
@@ -46,15 +46,15 @@ final readonly class MailFolderService
         return $result;
     }
 
-    public function folderForMailbox(Mailbox $mailbox, UuidV7 $folderId): ?Folder
+    public function folderForAccount(Account $account, UuidV7 $folderId): ?Folder
     {
         $query = $this->entityManager->createQueryBuilder()
             ->select('f')
             ->from(Folder::class, 'f')
-            ->join(FolderMailbox::class, 'fl', 'WITH', 'fl.folder = f')
-            ->where('fl.mailbox = :mailbox')
+            ->join(FolderAccount::class, 'fl', 'WITH', 'fl.folder = f')
+            ->where('fl.account = :account')
             ->andWhere('f.id = :folderId')
-            ->setParameter('mailbox', $mailbox)
+            ->setParameter('account', $account)
             ->setParameter('folderId', $folderId)
             ->setMaxResults(1)
             ->getQuery();
@@ -66,7 +66,7 @@ final readonly class MailFolderService
         return $result;
     }
 
-    public function emailForFolder(Mailbox $mailbox, Folder $folder, UuidV7 $emailId): ?Email
+    public function emailForFolder(Account $account, Folder $folder, UuidV7 $emailId): ?Email
     {
         $query = $this->entityManager->createQueryBuilder()
             ->select('e', 'ef', 'eal', 'ea', 'ebl', 'b', 'eat', 'at')
@@ -79,10 +79,10 @@ final readonly class MailFolderService
             ->leftJoin('e.emailAttachments', 'eat')
             ->leftJoin('eat.attachment', 'at')
             ->where('ef.folder = :folder')
-            ->andWhere('e.mailbox = :mailbox')
+            ->andWhere('e.account = :account')
             ->andWhere('e.id = :emailId')
             ->setParameter('folder', $folder)
-            ->setParameter('mailbox', $mailbox)
+            ->setParameter('account', $account)
             ->setParameter('emailId', $emailId)
             ->setMaxResults(1)
             ->getQuery();
@@ -99,16 +99,16 @@ final readonly class MailFolderService
      *
      * @return Email[]
      */
-    public function emailsForFolder(Mailbox $mailbox, Folder $folder, int $cutoffdate): array
+    public function emailsForFolder(Account $account, Folder $folder, int $cutoffdate): array
     {
         $queryBuilder = $this->entityManager->createQueryBuilder()
             ->select('e')
             ->from(Email::class, 'e')
             ->join('e.emailFolders', 'ef')
             ->where('ef.folder = :folder')
-            ->andWhere('e.mailbox = :mailbox')
+            ->andWhere('e.account = :account')
             ->setParameter('folder', $folder)
-            ->setParameter('mailbox', $mailbox)
+            ->setParameter('account', $account)
             ->addSelect('COALESCE(e.receivedAt, e.sentAt) AS HIDDEN sortDate')
             ->orderBy('sortDate', 'DESC');
 
