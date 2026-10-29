@@ -33,12 +33,12 @@
 docker run --rm --user 1000:1000 --entrypoint /bin/bash --network <db-network> \
   -v "$PWD":/app -w /app \
   -e DATABASE_URL="postgresql://user:pass@db:5432/avalynxofficeeas_test?serverVersion=16" \
-  jbsnewmedia/avalynxofficeeas-dev -lc "vendor/bin/phpunit"
+  jbsnewmedia/avalynxofficeeas-dev -lc "vendor-bin/phpunit/vendor/bin/phpunit"
 ```
 
 ## Required checks
 
-- PHPUnit: all tests must pass (`vendor/bin/phpunit`).
+- PHPUnit: all tests must pass (`vendor-bin/phpunit/vendor/bin/phpunit`).
 - PHPStan level max (`composer bin-phpstan`), ECS/PHP-CS-Fixer
   (`composer bin-ecs`, fixes via `composer bin-ecs-fix`) and Rector
   (`composer bin-rector`, fixes via `composer bin-rector-process`) must

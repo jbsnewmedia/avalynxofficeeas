@@ -15,8 +15,7 @@
         "z-push/z-push-dev": "^2.7.6"
     },
     "require-dev": {
-        "bamarni/composer-bin-plugin": "^1.9.1",
-        "phpunit/phpunit": "^12"
+        "bamarni/composer-bin-plugin": "^1.9.1"
     },
     "autoload": {
         "psr-4": {
@@ -86,13 +85,13 @@
             "@bin-ecs",
             "@bin-rector",
             "@bin-phpstan",
-            "vendor/bin/phpunit"
+            "vendor-bin/phpunit/vendor/bin/phpunit"
         ],
         "ci-fix": [
             "@bin-ecs-fix",
             "@bin-rector-process",
             "@bin-phpstan",
-            "vendor/bin/phpunit"
+            "vendor-bin/phpunit/vendor/bin/phpunit"
         ]
     },
     "repositories": [],

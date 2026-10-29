@@ -4,6 +4,7 @@ parameters:
         - src
         - tests
     bootstrapFiles:
+        - vendor-bin/phpunit/vendor/autoload.php
         - vendor/autoload.php
     level: max
     treatPhpDocTypesAsCertain: false
