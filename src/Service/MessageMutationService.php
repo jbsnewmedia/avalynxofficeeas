@@ -12,6 +12,7 @@ namespace AvalynxOfficeEas\Service;
 use AvalynxOfficeEas\Db\Model\Account;
 use AvalynxOfficeEas\Db\Model\Email;
 use AvalynxOfficeEas\Db\Model\Folder;
+use AvalynxOfficeEas\Db\Model\FolderFunction;
 use AvalynxOfficeEas\Licensing\LicenseState;
 use Doctrine\ORM\EntityManagerInterface;
 
@@ -43,19 +44,46 @@ final readonly class MessageMutationService
         $this->entityManager->flush();
     }
 
-    public function move(Email $email, Folder $target, ?Folder $source = null): void
+    public function move(Email $email, Folder $target): void
     {
         $this->licenseState->assertMutationAllowed('MAIL_MODIFY');
-        $this->folderService->moveEmailToFolder($email, $target, $source);
+        $this->folderService->moveEmailToFolder($email, $target);
         $this->entityManager->flush();
     }
 
     public function delete(Email $email): void
     {
         $this->licenseState->assertMutationAllowed('MAIL_DELETE');
+
+        // Deleting from any folder moves the mail into the Papierkorb
+        // (recoverable); deleting inside the wastebasket removes it
+        // permanently.
+        if (!$this->isInTrash($email)) {
+            $account = $email->getAccount();
+            if ($account instanceof Account) {
+                $trash = $this->folderService->ensureSystemFolder($account, FolderFunction::TRASH);
+                $this->folderService->moveEmailToFolder($email, $trash);
+                $this->entityManager->flush();
+
+                return;
+            }
+        }
+
         $this->removeLinks($email);
         $this->entityManager->remove($email);
         $this->entityManager->flush();
+    }
+
+    private function isInTrash(Email $email): bool
+    {
+        foreach ($email->getEmailFolders() as $emailFolder) {
+            $folder = $emailFolder->getFolder();
+            if ($folder instanceof Folder && $folder->hasFunction(FolderFunction::TRASH->value)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function emptyFolder(Account $account, Folder $folder): int

@@ -36,6 +36,8 @@ final class FolderMapping
             FolderFunction::INBOX->value => [SYNC_FOLDER_TYPE_INBOX],
             FolderFunction::DRAFTS->value => [SYNC_FOLDER_TYPE_DRAFTS],
             FolderFunction::OUTBOX->value => [SYNC_FOLDER_TYPE_OUTBOX],
+            FolderFunction::SCHEDULED->value => [SYNC_FOLDER_TYPE_USER_MAIL],
+            FolderFunction::TRASH->value => [SYNC_FOLDER_TYPE_WASTEBASKET],
             FolderFunction::MAILBOX->value => [SYNC_FOLDER_TYPE_USER_MAIL],
         ];
     }

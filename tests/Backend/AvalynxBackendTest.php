@@ -302,6 +302,22 @@ final class AvalynxBackendTest extends TestCase
     {
         self::assertTrue($this->backend->DeleteMessage($this->inboxServerId(), $this->emailId(), $this->contentParameters()));
 
+        // The mail lands in the Papierkorb (recoverable) instead of being
+        // removed.
+        self::em()->clear();
+        $email = self::em()->find(Email::class, $this->fixture['email']->getId());
+        self::assertNotNull($email);
+        $folderNames = [];
+        foreach ($email->getEmailFolders() as $emailFolder) {
+            $folderNames[] = $emailFolder->getFolder()?->getName();
+        }
+        self::assertSame(['Papierkorb'], $folderNames);
+
+        // Deleting inside the wastebasket removes the mail permanently.
+        $wasteBasketId = $this->backend->GetWasteBasket();
+        self::assertIsString($wasteBasketId);
+        self::assertTrue($this->backend->DeleteMessage($wasteBasketId, $this->emailId(), $this->contentParameters()));
+
         self::em()->clear();
         self::assertNull(self::em()->find(Email::class, $this->fixture['email']->getId()));
     }

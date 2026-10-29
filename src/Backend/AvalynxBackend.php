@@ -15,6 +15,7 @@ use AvalynxOfficeEas\Db\Model\CalendarEvent;
 use AvalynxOfficeEas\Db\Model\Email;
 use AvalynxOfficeEas\Db\Model\EmailAttachmentLink;
 use AvalynxOfficeEas\Db\Model\Folder;
+use AvalynxOfficeEas\Db\Model\FolderFunction;
 use AvalynxOfficeEas\Dto\EasUserContext;
 use AvalynxOfficeEas\Licensing\MutationBlockedException;
 use AvalynxOfficeEas\Service\AttachmentService;
@@ -619,10 +620,8 @@ final class AvalynxBackend extends \BackendDiff
             return false;
         }
 
-        $source = $this->folderFromServerId((string) $folderid);
-
         try {
-            $this->mutationService->move($email, $targetContext['folder'], $source);
+            $this->mutationService->move($email, $targetContext['folder']);
         } catch (MutationBlockedException $exception) {
             \ZLog::Write(LOGLEVEL_WARN, sprintf('AvalynxBackend->MoveMessage(): blocked by the license policy (%s)', $exception->operation));
 
@@ -816,11 +815,6 @@ final class AvalynxBackend extends \BackendDiff
         }
 
         return ['account' => $account, 'folder' => $folder];
-    }
-
-    private function folderFromServerId(string $serverId): ?Folder
-    {
-        return $this->folderContextFromServerId($serverId)['folder'] ?? null;
     }
 
     /**
@@ -1068,11 +1062,6 @@ final class AvalynxBackend extends \BackendDiff
 
     private function wasteBasketFolder(Account $account): Folder
     {
-        $existing = array_find($this->mailFolderService->foldersForAccount($account), fn ($folder) => FolderMapping::WASTE_BASKET_NAME === $folder->getName());
-        if (null !== $existing) {
-            return $existing;
-        }
-
-        return $this->folderService->ensureFolder($account, FolderMapping::WASTE_BASKET_NAME);
+        return $this->folderService->ensureSystemFolder($account, FolderFunction::TRASH);
     }
 }

@@ -15,5 +15,7 @@ enum FolderFunction: string
     case MAILBOX = 'mailbox';
     case INBOX = 'inbox';
     case OUTBOX = 'outbox';
+    case SCHEDULED = 'scheduled';
     case DRAFTS = 'drafts';
+    case TRASH = 'trash';
 }
