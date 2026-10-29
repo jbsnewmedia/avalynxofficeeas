@@ -7,5 +7,4 @@
 composer.phar
 .idea/
 .php-cs-fixer.cache
-.phpunit.result.cache/vendor-bin/*/vendor/
-/vendor-bin/*/composer.lock
+.phpunit.result.cache

@@ -39,6 +39,10 @@ docker run --rm --user 1000:1000 --entrypoint /bin/bash --network <db-network> \
 ## Required checks
 
 - PHPUnit: all tests must pass (`vendor-bin/phpunit/vendor/bin/phpunit`).
+- The root `composer.lock` and the `vendor-bin/*/composer.lock` files are
+  tracked: `composer install` is reproducible in Docker builds and CI.
+  Dependency updates are deliberate (`composer update`, which forwards to
+  all vendor-bins) and are committed as lock diffs.
 - PHPStan level max (`composer bin-phpstan`), ECS/PHP-CS-Fixer
   (`composer bin-ecs`, fixes via `composer bin-ecs-fix`) and Rector
   (`composer bin-rector`, fixes via `composer bin-rector-process`) must
