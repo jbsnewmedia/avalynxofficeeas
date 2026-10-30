@@ -1,4 +1,5 @@
 .git
+.github
 .idea
 .env
 .env.*
@@ -9,3 +10,18 @@ vendor/
 data/
 *.log
 *.cache
+.phpunit.cache
+.php-cs-fixer.cache
+# Developer tooling and documentation (not needed at runtime; the dev image
+# runs the QA tools against a mounted working copy). vendor-bin/*/composer.json
+# stays in the context for `composer install` of the dev image (bamarni
+# forward-command).
+Dockerfile.dev
+doc/
+rector.php
+ecs.php
+phpunit.xml.dist
+phpstan.neon
+.php-cs-fixer.dist.php
+vendor-bin/*/vendor
+AGENTS.md

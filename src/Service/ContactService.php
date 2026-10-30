@@ -88,15 +88,15 @@ final readonly class ContactService
             throw new \LogicException('Contact is not linked to the synchronized account.');
         }
 
-        foreach ($accountLinkRepository->findBy(['address' => $address]) as $link) {
-            if ($link instanceof AccountAddress && $link->getAccount() !== $account) {
-                $address = $this->copyContact($address);
-                $this->entityManager->persist($address);
-                $this->entityManager->remove($accountLink);
-                $this->linkAddress($account, $address);
-
-                break;
-            }
+        // Copy-on-write: an address row that is also referenced by another
+        // account (contact link or e-mail of that account) must never be
+        // modified in place, otherwise this account could rewrite the
+        // e-mail address shown in other users' mails.
+        if ($this->isSharedWithOtherAccounts($account, $address)) {
+            $address = $this->copyContact($address);
+            $this->entityManager->persist($address);
+            $this->entityManager->remove($accountLink);
+            $this->linkAddress($account, $address);
         }
 
         $this->contactMapper->applySyncContact($address, $contact);
@@ -145,6 +145,23 @@ final readonly class ContactService
             'SELECT address_id FROM account_address WHERE account_id = :accountId',
             ['accountId' => $account->getId()?->toRfc4122()],
         );
+    }
+
+    private function isSharedWithOtherAccounts(Account $account, Address $address): bool
+    {
+        foreach ($this->entityManager->getRepository(AccountAddress::class)->findBy(['address' => $address]) as $link) {
+            if ($link instanceof AccountAddress && $link->getAccount() !== $account) {
+                return true;
+            }
+        }
+
+        foreach ($this->entityManager->getRepository(EmailAddressLink::class)->findBy(['address' => $address]) as $link) {
+            if ($link instanceof EmailAddressLink && $link->getEmail()?->getAccount() !== $account) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function linkAddress(Account $account, Address $address): void

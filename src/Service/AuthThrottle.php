@@ -16,13 +16,18 @@ use Symfony\Component\Cache\Adapter\AdapterInterface;
  * client IP and normalized username, blocking either key while its limit is
  * exceeded. Successful authentication clears both counters.
  *
+ * The per-user limit is deliberately higher than the per-IP limit: a
+ * stricter per-user lockout would let anyone lock out a known username
+ * (lockout DoS) with a handful of requests from changing addresses.
+ *
  * Ported from the mailer project (App\Eas\Security\EasAuthThrottle) to the
  * Z-Push backend context.
  */
 final readonly class AuthThrottle
 {
-    private const int MAX_FAILURES = 10;
-    private const int WINDOW_SECONDS = 300;
+    public const int MAX_IP_FAILURES = 10;
+    public const int MAX_USER_FAILURES = 50;
+    public const int WINDOW_SECONDS = 300;
 
     public function __construct(private readonly AdapterInterface $cache)
     {
@@ -30,8 +35,8 @@ final readonly class AuthThrottle
 
     public function isBlocked(string $clientIp, string $username): bool
     {
-        return $this->failures('ip', $clientIp) >= self::MAX_FAILURES
-            || $this->failures('user', $username) >= self::MAX_FAILURES;
+        return $this->failures('ip', $clientIp) >= self::MAX_IP_FAILURES
+            || $this->failures('user', $username) >= self::MAX_USER_FAILURES;
     }
 
     public function recordFailure(string $clientIp, string $username): void

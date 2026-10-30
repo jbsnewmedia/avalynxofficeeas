@@ -190,4 +190,132 @@ final class MimeParserTest extends TestCase
         $invalidUtf8 = $this->parser->parse("Content-Type: text/plain; charset=utf-8\r\n\r\n\xFFbroken");
         self::assertTrue(mb_check_encoding($invalidUtf8->getTextBody(), 'UTF-8'));
     }
+
+    public function testFirstValueWinsForDuplicateParameters(): void
+    {
+        self::assertSame('utf-8', MimeParser::headerParameter('text/plain; charset=utf-8; charset=iso-8859-1', 'charset'));
+        self::assertSame('safe.txt', MimeParser::headerParameter('attachment; filename="safe.txt"; filename="evil.exe"', 'filename'));
+        self::assertSame('safe.txt', MimeParser::headerParameter('attachment; FILENAME="safe.txt"; filename="evil.exe"', 'filename'));
+        self::assertSame('a', MimeParser::headerParameter('multipart/mixed; boundary=a; boundary=b', 'boundary'));
+
+        $mime = implode("\r\n", [
+            'Content-Type: multipart/mixed; boundary=first; boundary=second',
+            '',
+            '--first',
+            'Content-Type: text/plain',
+            '',
+            'inside first',
+            '--first--',
+            '--second',
+            'Content-Type: text/plain',
+            '',
+            'inside second',
+            '--second--',
+        ]);
+
+        $message = $this->parser->parse($mime);
+        self::assertCount(1, $message->getParts());
+        self::assertSame('inside first', $message->getParts()[0]->getTextBody());
+    }
+
+    public function testCharsetAllowlist(): void
+    {
+        // allowlisted charsets (and common aliases) are converted
+        self::assertSame('Grüße', MimeParser::convertToUtf8("Gr\xFC\xDFe", 'iso-8859-1'));
+        self::assertSame('Grüße', MimeParser::convertToUtf8("Gr\xFC\xDFe", 'latin1'));
+        self::assertSame('100 €', MimeParser::convertToUtf8("100 \xA4", 'ISO-8859-15'));
+        self::assertSame('100 €', MimeParser::convertToUtf8("100 \x80", 'windows-1252'));
+        self::assertSame('100 €', MimeParser::convertToUtf8("100 \x80", 'cp1252'));
+        self::assertSame('Привет', MimeParser::convertToUtf8("\xF0\xD2\xC9\xD7\xC5\xD4", 'koi8-r'));
+        self::assertSame('日本', MimeParser::convertToUtf8("\x93\xFA\x96\x7B", 'shift_jis'));
+        self::assertSame('日本', MimeParser::convertToUtf8("\x1B\$B\x46\x7C\x4B\x5C\x1B(B", 'iso-2022-jp'));
+        self::assertSame('中文', MimeParser::convertToUtf8("\xD6\xD0\xCE\xC4", 'gb2312'));
+        self::assertSame('Hi', MimeParser::convertToUtf8("\xFF\xFEH\x00i\x00", 'utf-16'));
+        self::assertSame('Hi', MimeParser::convertToUtf8("H\x00i\x00", 'UTF-16LE'));
+        self::assertSame('Hi', MimeParser::convertToUtf8('Hi', 'us-ascii'));
+
+        // anything else is treated as UTF-8: valid input passes through unchanged ...
+        self::assertSame('Grüße', MimeParser::convertToUtf8('Grüße', 'x-unknown'));
+        self::assertSame('Grüße', MimeParser::convertToUtf8('Grüße', 'HTML-ENTITIES'));
+        self::assertSame('&amp;', MimeParser::convertToUtf8('&amp;', 'HTML-ENTITIES'));
+        self::assertSame('SGk=', MimeParser::convertToUtf8('SGk=', 'BASE64'));
+        self::assertSame('=48=69', MimeParser::convertToUtf8('=48=69', 'Quoted-Printable'));
+        self::assertSame('Grüße', MimeParser::convertToUtf8('Grüße', 'UUENCODE'));
+        self::assertSame('Grüße', MimeParser::convertToUtf8('Grüße', 'ISO-8859-1; evil'));
+        self::assertSame('Grüße', MimeParser::convertToUtf8('Grüße', 'latin42'));
+
+        // ... and invalid bytes are cleaned up instead of being passed to mbstring
+        $cleaned = MimeParser::convertToUtf8("Gr\xFC\xDFe", 'x-unknown');
+        self::assertTrue(mb_check_encoding($cleaned, 'UTF-8'));
+        self::assertSame('Grüße', $cleaned);
+
+        $decoded = $this->parser->parse("Subject: =?HTML-ENTITIES?Q?=26amp=3B?=\r\nContent-Type: text/plain; charset=\"7bit\"\r\n\r\n\xC3\xBCber");
+        self::assertSame('&amp;', $decoded->getHeader('subject'));
+        self::assertSame('über', $decoded->getTextBody());
+    }
+
+    public function testRejectsOversizedInput(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('exceeds the limit');
+
+        $this->parser->parse(str_repeat('a', MimeParser::MAX_INPUT_BYTES + 1));
+    }
+
+    public function testAcceptsInputAtTheSizeLimit(): void
+    {
+        $message = $this->parser->parse(str_repeat('a', MimeParser::MAX_INPUT_BYTES));
+
+        self::assertSame(MimeParser::MAX_INPUT_BYTES, strlen($message->getTextBody()));
+    }
+
+    public function testRejectsTooManyParts(): void
+    {
+        $lines = ['Content-Type: multipart/mixed; boundary=b', ''];
+        for ($i = 0; $i < MimeParser::MAX_PARTS; ++$i) {
+            $lines[] = '--b';
+            $lines[] = 'Content-Type: text/plain';
+            $lines[] = '';
+            $lines[] = 'part '.$i;
+        }
+        $lines[] = '--b--';
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('MIME parts');
+
+        $this->parser->parse(implode("\r\n", $lines));
+    }
+
+    public function testAcceptsPartsUpToTheLimit(): void
+    {
+        $lines = ['Content-Type: multipart/mixed; boundary=b', ''];
+        for ($i = 0; $i < MimeParser::MAX_PARTS - 1; ++$i) {
+            $lines[] = '--b';
+            $lines[] = 'Content-Type: text/plain';
+            $lines[] = '';
+            $lines[] = 'part '.$i;
+        }
+        $lines[] = '--b--';
+
+        $message = $this->parser->parse(implode("\r\n", $lines));
+
+        self::assertCount(MimeParser::MAX_PARTS - 1, $message->getParts());
+    }
+
+    public function testNestedPartsCountTowardsTheLimit(): void
+    {
+        $inner = ['--outer', 'Content-Type: multipart/mixed; boundary=inner', ''];
+        for ($i = 0; $i < MimeParser::MAX_PARTS; ++$i) {
+            $inner[] = '--inner';
+            $inner[] = 'Content-Type: text/plain';
+            $inner[] = '';
+            $inner[] = 'x';
+        }
+        $inner[] = '--inner--';
+        $inner[] = '--outer--';
+
+        $this->expectException(\RuntimeException::class);
+
+        $this->parser->parse(implode("\r\n", ['Content-Type: multipart/mixed; boundary=outer', '', ...$inner]));
+    }
 }

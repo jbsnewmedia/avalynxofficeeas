@@ -74,24 +74,44 @@ final class AuthThrottleTest extends TestCase
         self::assertFalse($this->throttle->isBlocked('198.51.100.7', 'user@example.com'));
     }
 
-    public function testBlocksAfterTenFailures(): void
+    public function testIpIsBlockedAfterTenFailures(): void
     {
-        for ($i = 0; $i < 10; ++$i) {
+        for ($i = 0; $i < AuthThrottle::MAX_IP_FAILURES; ++$i) {
             $this->throttle->recordFailure('198.51.100.7', 'user@example.com');
         }
 
         self::assertTrue($this->throttle->isBlocked('198.51.100.7', 'user@example.com'));
-        self::assertTrue($this->throttle->isBlocked('198.51.100.8', 'USER@example.com'));
+        self::assertTrue($this->throttle->isBlocked('198.51.100.7', 'other@example.com'));
+        // ten failures are far below the per-user limit: the user keeps working from another address
+        self::assertFalse($this->throttle->isBlocked('198.51.100.8', 'USER@example.com'));
         self::assertFalse($this->throttle->isBlocked('198.51.100.8', 'other@example.com'));
     }
 
     public function testNineFailuresDoNotBlock(): void
     {
-        for ($i = 0; $i < 9; ++$i) {
+        for ($i = 0; $i < AuthThrottle::MAX_IP_FAILURES - 1; ++$i) {
             $this->throttle->recordFailure('203.0.113.5', 'user@example.com');
         }
 
         self::assertFalse($this->throttle->isBlocked('203.0.113.5', 'user@example.com'));
+    }
+
+    public function testUserIsBlockedOnlyAfterFiftyFailuresFromDistinctIps(): void
+    {
+        self::assertGreaterThan(AuthThrottle::MAX_IP_FAILURES, AuthThrottle::MAX_USER_FAILURES);
+
+        for ($i = 0; $i < AuthThrottle::MAX_USER_FAILURES - 1; ++$i) {
+            // one failure per address: no IP counter ever reaches its limit
+            $this->throttle->recordFailure(sprintf('203.0.%d.%d', intdiv($i, 250), $i % 250 + 1), 'user@example.com');
+        }
+
+        self::assertFalse($this->throttle->isBlocked('198.51.100.20', 'user@example.com'));
+
+        $this->throttle->recordFailure('203.0.5.1', 'user@example.com');
+
+        self::assertTrue($this->throttle->isBlocked('198.51.100.20', 'user@example.com'));
+        self::assertTrue($this->throttle->isBlocked('198.51.100.20', ' USER@example.com '));
+        self::assertFalse($this->throttle->isBlocked('198.51.100.20', 'other@example.com'));
     }
 
     public function testResetClearsFailures(): void

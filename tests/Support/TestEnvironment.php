@@ -120,14 +120,17 @@ trait TestEnvironment
         $em->clear();
     }
 
-    /** Web login password of the seeded user (never accepted by EAS). */
+    /**
+     * Web login password of the seeded user (never accepted by EAS). EAS no
+     * longer maps app_user.password, so this value is not stored anywhere.
+     */
     protected const string SEED_WEB_PASSWORD = 'web-secret';
 
     /** Active app password of the seeded user (accepted by EAS). */
     protected const string SEED_APP_PASSWORD = 'admin';
 
     /**
-     * Seeds: user (web password "web-secret", app password "admin") +
+     * Seeds: user (app password "admin", no web password is stored) +
      * account with an inbox folder, one unread email, one contact and one
      * calendar event, COMMUNITY license.
      *
@@ -139,7 +142,6 @@ trait TestEnvironment
 
         $user = new User();
         $user->setEmail('admin@example.com');
-        $user->setPassword(password_hash(self::SEED_WEB_PASSWORD, PASSWORD_BCRYPT));
         $em->persist($user);
 
         $appPassword = new UserAppPassword();

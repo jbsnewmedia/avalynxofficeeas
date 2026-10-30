@@ -478,7 +478,7 @@ final class AvalynxBackend extends \BackendDiff
                 }
 
                 if (null !== $contact) {
-                    $contactAccount = is_string($folderid) ? $this->accountFromContactsServerId($folderid) : null;
+                    $contactAccount = $this->accountFromContactsServerId($folderid);
                     if (null === $contactAccount) {
                         return false;
                     }
@@ -698,8 +698,8 @@ final class AvalynxBackend extends \BackendDiff
 
         try {
             return $this->sendMailService->send($sm, $this->accountForOutgoingMessage($sm));
-        } catch (\RuntimeException $exception) {
-            \ZLog::Write(LOGLEVEL_ERROR, sprintf('AvalynxBackend->SendMail(): %s', $exception->getMessage()));
+        } catch (\Throwable $exception) {
+            \ZLog::Write(LOGLEVEL_ERROR, sprintf('AvalynxBackend->SendMail(): (%s) %s', $exception::class, $exception->getMessage()));
 
             throw new \StatusException('SendMail failed', SYNC_COMMONSTATUS_MAILSUBMISSIONFAILED);
         }

@@ -315,7 +315,7 @@ final class AvalynxBackendTest extends TestCase
         $sendMail->clientid = 'test-client-mime';
         $sendMail->mime = implode("\r\n", [
             'From: Info <info@example.com>',
-            'To: "Doe, Jane" <jane@example.com>, bob@example.net',
+            'To: "Doe, Jane" <jane@example.com>, bob@example.net, "Spoofed Name" <contact@example.com>',
             'Cc: =?UTF-8?Q?J=C3=BCrgen?= <juergen@example.com>',
             'Reply-To: support@example.com',
             'Subject: =?UTF-8?B?QW5oYW5nIMOEbmRlcnVuZw==?=',
@@ -355,9 +355,11 @@ final class AvalynxBackendTest extends TestCase
         foreach ($email->getEmailAddresses() as $link) {
             $addresses[$link->getType()->value][] = [$link->getAddress()?->getEmail(), $link->getAddress()?->getName()];
         }
-        self::assertSame([['info@example.com', 'Info']], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::SENDER->value] ?? []);
-        self::assertSame([['jane@example.com', 'Doe, Jane'], ['bob@example.net', null]], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::RECIPIENT->value] ?? []);
-        self::assertSame([['juergen@example.com', 'Jürgen']], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::CC->value] ?? []);
+        // Display names from the device are never written to the shared
+        // address pool: new addresses stay nameless, existing names are kept.
+        self::assertSame([['info@example.com', null]], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::SENDER->value] ?? []);
+        self::assertSame([['jane@example.com', null], ['bob@example.net', null], ['contact@example.com', 'Contact']], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::RECIPIENT->value] ?? []);
+        self::assertSame([['juergen@example.com', null]], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::CC->value] ?? []);
         self::assertSame([['support@example.com', null]], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::REPLY_TO->value] ?? []);
 
         $bodies = [];
@@ -427,6 +429,229 @@ final class AvalynxBackendTest extends TestCase
                 $_ENV['ATTACHMENT_STORAGE_MAX_BYTES'] = $previous;
             }
         }
+    }
+
+    public function testSendMailRejectsInvalidRecipientAddress(): void
+    {
+        $sendMail = new \SyncSendMail();
+        $sendMail->clientid = 'test-client-invalid-address';
+        $sendMail->mime = implode("\r\n", [
+            'From: info@example.com',
+            'To: "Broken" <not an address@>, valid@example.com',
+            'Subject: Invalid recipient',
+            'Content-Type: text/plain',
+            '',
+            'body',
+        ]);
+
+        try {
+            $this->backend->SendMail($sendMail);
+            self::fail('Invalid recipient addresses must abort the submission.');
+        } catch (\StatusException $exception) {
+            self::assertSame(SYNC_COMMONSTATUS_MAILSUBMISSIONFAILED, $exception->getCode());
+        }
+
+        self::em()->clear();
+        self::assertNull(self::em()->getRepository(Email::class)->findOneBy(['importKey' => 'eas|test-client-invalid-address']));
+        self::assertNull(self::em()->getRepository(\AvalynxOfficeEas\Db\Model\Address::class)->findOneBy(['email' => 'valid@example.com']));
+    }
+
+    public function testSendMailNormalizesAddressesAndHardensPersistedValues(): void
+    {
+        $longSubject = str_repeat('S', 300);
+        $sendMail = new \SyncSendMail();
+        $sendMail->clientid = 'test-client-hardened';
+        $sendMail->mime = implode("\r\n", [
+            'From: INFO@Example.com',
+            'To: "Mixed" <Mixed.Case@Example.ORG>, contact@example.com',
+            "Subject: Nul\0byte \xFFbroken ".$longSubject,
+            "Message-ID: <id\0with-nul@example.com>",
+            'Content-Type: multipart/mixed; boundary="b"',
+            '',
+            '--b',
+            'Content-Type: text/plain',
+            '',
+            'body',
+            '--b',
+            "Content-Type: application/x-\0evil\xFF; name=\"ignored.bin\"",
+            'Content-Disposition: attachment; filename="'.str_repeat('n', 300)."\0.bin\"",
+            'Content-Transfer-Encoding: base64',
+            '',
+            base64_encode('payload'),
+            '--b--',
+            '',
+        ]);
+
+        self::assertTrue($this->backend->SendMail($sendMail));
+
+        self::em()->clear();
+        $email = self::em()->getRepository(Email::class)->findOneBy(['importKey' => 'eas|test-client-hardened']);
+        self::assertNotNull($email);
+
+        $subject = $email->getSubject();
+        self::assertNotNull($subject);
+        self::assertSame(255, mb_strlen($subject));
+        self::assertStringNotContainsString("\0", $subject);
+        self::assertStringStartsWith('Nulbyte ÿbroken ', $subject);
+        self::assertTrue(mb_check_encoding($subject, 'UTF-8'));
+        self::assertSame('<idwith-nul@example.com>', $email->getMessageId());
+
+        $addresses = [];
+        foreach ($email->getEmailAddresses() as $link) {
+            $addresses[$link->getType()->value][] = $link->getAddress()?->getEmail();
+        }
+        // Addresses are stored lower-cased; the existing contact row is reused.
+        self::assertSame(['info@example.com'], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::SENDER->value] ?? []);
+        self::assertSame(['mixed.case@example.org', 'contact@example.com'], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::RECIPIENT->value] ?? []);
+        self::assertCount(1, self::em()->getRepository(\AvalynxOfficeEas\Db\Model\Address::class)->findBy(['email' => 'contact@example.com']));
+        self::assertNull(self::em()->getRepository(\AvalynxOfficeEas\Db\Model\Address::class)->findOneBy(['email' => 'Mixed.Case@Example.ORG']));
+
+        $attachments = $email->getEmailAttachments();
+        self::assertCount(1, $attachments);
+        $attachment = $attachments->first() instanceof \AvalynxOfficeEas\Db\Model\EmailAttachmentLink ? $attachments->first()->getAttachment() : null;
+        self::assertNotNull($attachment);
+        $attachmentName = (string) $attachment->getName();
+        self::assertSame(255, mb_strlen($attachmentName));
+        self::assertStringNotContainsString("\0", $attachmentName);
+        $mimeType = (string) $attachment->getMimeType();
+        self::assertStringNotContainsString("\0", $mimeType);
+        self::assertTrue(mb_check_encoding($mimeType, 'UTF-8'));
+        self::assertLessThanOrEqual(190, mb_strlen($mimeType));
+    }
+
+    public function testSendMailRejectsAttachmentsAboveTotalLimit(): void
+    {
+        // Each attachment is below the 1 KiB limit, the sum is not.
+        $previous = $_ENV['ATTACHMENT_STORAGE_MAX_BYTES'] ?? null;
+        $_ENV['ATTACHMENT_STORAGE_MAX_BYTES'] = '1024';
+
+        try {
+            ServiceHolder::reset();
+            ServiceHolder::bootstrap(dirname(__DIR__, 2), self::em());
+            $backend = new AvalynxBackend();
+            self::assertTrue($backend->Logon('admin@example.com', '', 'admin'));
+
+            $lines = [
+                'From: info@example.com',
+                'To: recipient@example.com',
+                'Subject: Too large in total',
+                'Content-Type: multipart/mixed; boundary="b"',
+                '',
+            ];
+            for ($i = 0; $i < 3; ++$i) {
+                $lines[] = '--b';
+                $lines[] = sprintf('Content-Type: application/octet-stream; name="part%d.bin"', $i);
+                $lines[] = sprintf('Content-Disposition: attachment; filename="part%d.bin"', $i);
+                $lines[] = 'Content-Transfer-Encoding: base64';
+                $lines[] = '';
+                $lines[] = base64_encode(str_repeat('x', 600));
+            }
+            $lines[] = '--b--';
+            $lines[] = '';
+
+            $sendMail = new \SyncSendMail();
+            $sendMail->clientid = 'test-client-total-oversize';
+            $sendMail->mime = implode("\r\n", $lines);
+
+            try {
+                $backend->SendMail($sendMail);
+                self::fail('Attachments above the total limit must abort the submission.');
+            } catch (\StatusException $exception) {
+                self::assertSame(SYNC_COMMONSTATUS_MAILSUBMISSIONFAILED, $exception->getCode());
+            }
+
+            self::em()->clear();
+            self::assertNull(self::em()->getRepository(Email::class)->findOneBy(['importKey' => 'eas|test-client-total-oversize']));
+        } finally {
+            if (null === $previous) {
+                unset($_ENV['ATTACHMENT_STORAGE_MAX_BYTES']);
+            } else {
+                $_ENV['ATTACHMENT_STORAGE_MAX_BYTES'] = $previous;
+            }
+        }
+    }
+
+    public function testContactUpdateCopiesAddressReferencedByAnotherAccountsMail(): void
+    {
+        // A mail of a foreign account references the contact's address row.
+        $other = new \AvalynxOfficeEas\Db\Model\Account();
+        $other->setName('Other');
+        $other->setEmail('other@example.com');
+        self::em()->persist($other);
+
+        $contact = self::em()->find(\AvalynxOfficeEas\Db\Model\Address::class, $this->fixture['contact']->getId());
+        self::assertNotNull($contact);
+
+        $foreignMail = new Email();
+        $foreignMail->setSubject('Foreign');
+        $foreignMail->setReceivedAt(new \DateTimeImmutable('-1 hour'));
+        $foreignMail->setAccount($other);
+        self::em()->persist($foreignMail);
+
+        $link = new \AvalynxOfficeEas\Db\Model\EmailAddressLink();
+        $link->setEmail($foreignMail);
+        $link->setAddress($contact);
+        $link->setType(\AvalynxOfficeEas\Db\Model\EmailAddressType::SENDER);
+        $foreignMail->addEmailAddress($link);
+        self::em()->persist($link);
+        self::em()->flush();
+        self::em()->clear();
+
+        // A new request re-authenticates after the clear.
+        self::assertTrue($this->backend->Logon('admin@example.com', '', 'admin'));
+
+        $contactId = $this->fixture['contact']->getId();
+        \assert(null !== $contactId);
+
+        $update = new \SyncContact();
+        $update->fileas = 'Renamed';
+        $update->email1address = 'renamed@example.com';
+
+        $result = $this->backend->ChangeMessage($this->contactServerId(), $contactId->toRfc4122(), $update, $this->contentParameters());
+        self::assertIsArray($result);
+        self::assertNotSame($contactId->toRfc4122(), $result['id']);
+
+        self::em()->clear();
+
+        // The shared row (and with it the sender shown in the other account's mail) is untouched.
+        $original = self::em()->find(\AvalynxOfficeEas\Db\Model\Address::class, $contactId);
+        self::assertNotNull($original);
+        self::assertSame('contact@example.com', $original->getEmail());
+        self::assertSame('Contact', $original->getName());
+        self::assertNull(self::em()->getRepository(\AvalynxOfficeEas\Db\Model\AccountAddress::class)->findOneBy(['address' => $original]));
+
+        // This account now owns a private copy with the new data.
+        $copy = self::em()->getRepository(\AvalynxOfficeEas\Db\Model\Address::class)->findOneBy(['email' => 'renamed@example.com']);
+        self::assertNotNull($copy);
+        self::assertSame('Renamed', $copy->getName());
+        self::assertTrue($copy->isContact());
+        self::assertSame($copy->getId()?->toRfc4122(), $result['id']);
+        $accountLinks = self::em()->getRepository(\AvalynxOfficeEas\Db\Model\AccountAddress::class)->findBy(['address' => $copy]);
+        self::assertCount(1, $accountLinks);
+        self::assertSame($this->fixture['account']->getId()?->toRfc4122(), $accountLinks[0]->getAccount()?->getId()?->toRfc4122());
+
+        // The contact folder of this account lists only the copy.
+        $ids = array_map(static fn (array|false $item): mixed => false === $item ? null : $item['id'], (array) $this->backend->GetMessageList($this->contactServerId(), 0));
+        self::assertSame([$copy->getId()?->toRfc4122()], $ids);
+    }
+
+    public function testContactUpdateEditsOwnUnsharedAddressInPlace(): void
+    {
+        $contactId = $this->fixture['contact']->getId();
+        \assert(null !== $contactId);
+
+        $update = new \SyncContact();
+        $update->fileas = 'Renamed';
+        $update->email1address = 'renamed@example.com';
+
+        $result = $this->backend->ChangeMessage($this->contactServerId(), $contactId->toRfc4122(), $update, $this->contentParameters());
+        self::assertIsArray($result);
+        self::assertSame($contactId->toRfc4122(), $result['id']);
+
+        self::em()->clear();
+        $address = self::em()->find(\AvalynxOfficeEas\Db\Model\Address::class, $contactId);
+        self::assertNotNull($address);
+        self::assertSame('renamed@example.com', $address->getEmail());
     }
 
     public function testEmptyFolderMovesMailsToWasteBasketAndEmptyingWasteBasketDeletesPermanently(): void

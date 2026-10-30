@@ -24,8 +24,6 @@ class User
     private ?UuidV7 $id = null;
     #[ORM\Column(type: 'string', length: 180, unique: true)]
     private string $email;
-    #[ORM\Column(type: 'string')]
-    private string $password;
 
     /**
      * @var list<string>
@@ -61,18 +59,6 @@ class User
     public function setEmail(string $email): self
     {
         $this->email = strtolower($email);
-
-        return $this;
-    }
-
-    public function getPassword(): string
-    {
-        return $this->password;
-    }
-
-    public function setPassword(string $password): self
-    {
-        $this->password = $password;
 
         return $this;
     }

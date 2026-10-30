@@ -36,6 +36,12 @@ use Doctrine\ORM\EntityManagerInterface;
  */
 final readonly class SendMailService
 {
+    private const int SUBJECT_MAX_LENGTH = 255;
+    private const int MESSAGE_ID_MAX_LENGTH = 255;
+    private const int ADDRESS_MAX_LENGTH = 190;
+    private const int ATTACHMENT_NAME_MAX_LENGTH = 255;
+    private const int MIME_TYPE_MAX_LENGTH = 190;
+
     /** @var \Doctrine\ORM\EntityRepository<Address> */
     private \Doctrine\ORM\EntityRepository $addressRepository;
 
@@ -109,12 +115,12 @@ final readonly class SendMailService
         $email->setIsOutgoing(true)->setIsRead(true);
         $email->setImportKey('eas|'.$clientKey);
         $email->setContentHash(hash('sha256', $mime));
-        $email->setSubject((string) $message->getHeader('subject'));
+        $email->setSubject(self::sanitize((string) $message->getHeader('subject'), self::SUBJECT_MAX_LENGTH));
         $email->setReceivedAt(new \DateTimeImmutable());
-        $email->setMessageId((string) $message->getHeader('message-id'));
+        $email->setMessageId(self::sanitize((string) $message->getHeader('message-id'), self::MESSAGE_ID_MAX_LENGTH));
 
         if (!$this->linkHeaderAddresses($email, $message, 'from', EmailAddressType::SENDER, strtolower(trim($account->getEmail())))) {
-            $this->linkAddress($email, $account->getEmail(), null, EmailAddressType::SENDER);
+            $this->linkAddress($email, $account->getEmail(), EmailAddressType::SENDER);
         }
         $this->linkHeaderAddresses($email, $message, 'to', EmailAddressType::RECIPIENT);
         $this->linkHeaderAddresses($email, $message, 'cc', EmailAddressType::CC);
@@ -131,53 +137,89 @@ final readonly class SendMailService
         $linked = false;
 
         foreach ($message->getAddresses($headerName) as $address) {
-            $emailAddress = trim($address['email'], "<> \t\n\r");
-            if (null !== $requiredAddress && strtolower($emailAddress) !== $requiredAddress) {
+            $emailAddress = self::normalizeAddress($address['email']);
+            if (null !== $requiredAddress && $emailAddress !== $requiredAddress) {
                 continue;
             }
 
-            $this->linkAddress($email, $emailAddress, $address['name'], $type);
+            $this->linkAddress($email, $emailAddress, $type);
             $linked = true;
         }
 
         return $linked;
     }
 
-    private function linkAddress(Email $email, string $emailAddr, ?string $name, EmailAddressType $type): void
+    /**
+     * Links the address by e-mail only. The display name supplied by the
+     * device is deliberately not persisted: `Address` rows are shared by all
+     * accounts, so a client-chosen name would be shown to every other user
+     * of the installation (display-name poisoning).
+     *
+     * Addresses are normalized to lower case and must pass FILTER_VALIDATE_EMAIL;
+     * anything else aborts the submission (the device reports
+     * MailSubmissionFailed) instead of persisting garbage in the shared table.
+     *
+     * @throws \RuntimeException when the address is not a valid e-mail address
+     */
+    private function linkAddress(Email $email, string $emailAddr, EmailAddressType $type): void
     {
-        $emailAddr = trim($emailAddr, "<> \t\n\r");
+        $emailAddr = self::normalizeAddress($emailAddr);
 
-        if ('' !== $emailAddr) {
-            $address = $this->addressRepository->findOneBy(['email' => $emailAddr]);
-
-            if (null === $address) {
-                $address = new Address();
-                $address->setEmail($emailAddr);
-                $this->entityManager->persist($address);
-            }
-
-            if (null !== $name && '' !== $name && null === $address->getName()) {
-                $address->setName($name);
-            }
-
-            $link = new EmailAddressLink();
-            $link->setEmail($email);
-            $link->setAddress($address);
-            $link->setType($type);
-            $email->addEmailAddress($link);
-            $this->entityManager->persist($link);
+        if ('' === $emailAddr) {
+            return;
         }
+
+        if (strlen($emailAddr) > self::ADDRESS_MAX_LENGTH || false === filter_var($emailAddr, FILTER_VALIDATE_EMAIL)) {
+            $message = sprintf('Invalid %s address "%s"', $type->value, mb_substr($emailAddr, 0, 80));
+            $this->log($message);
+
+            throw new \RuntimeException($message);
+        }
+
+        $address = $this->addressRepository->findOneBy(['email' => $emailAddr]);
+
+        if (null === $address) {
+            $address = new Address();
+            $address->setEmail($emailAddr);
+            $this->entityManager->persist($address);
+        }
+
+        $link = new EmailAddressLink();
+        $link->setEmail($email);
+        $link->setAddress($address);
+        $link->setType($type);
+        $email->addEmailAddress($link);
+        $this->entityManager->persist($link);
+    }
+
+    private static function normalizeAddress(string $emailAddr): string
+    {
+        return strtolower(trim(self::sanitize($emailAddr, PHP_INT_MAX), "<> \t\n\r"));
+    }
+
+    /**
+     * Hardens a client-supplied string before it reaches a VARCHAR column:
+     * strips NUL bytes (PostgreSQL rejects them), repairs invalid UTF-8 and
+     * truncates to the column length (in characters).
+     */
+    private static function sanitize(string $value, int $maxLength): string
+    {
+        $value = str_replace("\0", '', $value);
+        $value = MimeParser::convertToUtf8($value, null);
+
+        return mb_substr($value, 0, $maxLength);
     }
 
     private function extractParts(MimePart $message, Email $email): void
     {
         $textBody = '';
         $htmlBody = '';
+        $attachmentBytes = 0;
 
         if ($message->isMultipart()) {
-            $this->collectParts($message, $email, $textBody, $htmlBody);
+            $this->collectParts($message, $email, $textBody, $htmlBody, $attachmentBytes);
         } elseif ($message->isAttachment()) {
-            $this->storeAttachmentPart($message, $email);
+            $this->storeAttachmentPart($message, $email, $attachmentBytes);
         } elseif ('text/html' === $message->getContentType()) {
             $htmlBody = $message->getTextBody();
         } else {
@@ -192,17 +234,17 @@ final readonly class SendMailService
         }
     }
 
-    private function collectParts(MimePart $parent, Email $email, string &$textBody, string &$htmlBody): void
+    private function collectParts(MimePart $parent, Email $email, string &$textBody, string &$htmlBody, int &$attachmentBytes): void
     {
         foreach ($parent->getParts() as $part) {
             if ($part->isMultipart()) {
-                $this->collectParts($part, $email, $textBody, $htmlBody);
+                $this->collectParts($part, $email, $textBody, $htmlBody, $attachmentBytes);
 
                 continue;
             }
 
             if ($part->isAttachment()) {
-                $this->storeAttachmentPart($part, $email);
+                $this->storeAttachmentPart($part, $email, $attachmentBytes);
 
                 continue;
             }
@@ -240,9 +282,12 @@ final readonly class SendMailService
     }
 
     /**
+     * The size limit (ATTACHMENT_STORAGE_MAX_BYTES) applies to every single
+     * attachment and to the sum of all attachments of one message.
+     *
      * @throws \RuntimeException when the attachment exceeds the configured limit or cannot be stored
      */
-    private function storeAttachmentPart(MimePart $part, Email $email): void
+    private function storeAttachmentPart(MimePart $part, Email $email, int &$attachmentBytes): void
     {
         $data = $part->getDecodedBody();
 
@@ -250,7 +295,10 @@ final readonly class SendMailService
             return;
         }
 
-        $name = $part->getFileName() ?? 'attachment.bin';
+        $name = self::sanitize($part->getFileName() ?? 'attachment.bin', self::ATTACHMENT_NAME_MAX_LENGTH);
+        if ('' === $name) {
+            $name = 'attachment.bin';
+        }
         $maxBytes = $this->attachmentStorage->getMaxBytes();
 
         if (strlen($data) > $maxBytes) {
@@ -260,10 +308,21 @@ final readonly class SendMailService
             throw new \RuntimeException($message);
         }
 
+        $attachmentBytes += strlen($data);
+
+        if ($attachmentBytes > $maxBytes) {
+            $message = sprintf('Attachments (%d bytes in total) exceed the limit of %d bytes', $attachmentBytes, $maxBytes);
+            $this->log($message);
+
+            throw new \RuntimeException($message);
+        }
+
+        $mimeType = self::sanitize($part->getContentType(), self::MIME_TYPE_MAX_LENGTH);
+
         $attachment = new Attachment();
         $attachment->setName($name);
         $attachment->setSize(strlen($data));
-        $attachment->setMimeType($part->getContentType());
+        $attachment->setMimeType('' !== $mimeType ? $mimeType : 'application/octet-stream');
         $attachment->setSha1(sha1($data));
 
         try {

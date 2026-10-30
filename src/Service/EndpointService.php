@@ -311,7 +311,13 @@ final class EndpointService
             }
         } elseif ($ex instanceof \WBXMLException) {
             \ZLog::Write(LOGLEVEL_FATAL, "Request could not be processed correctly due to a WBXMLException. Please report this including the 'WBXML debug data' logged. Be aware that the debug data could contain confidential information.");
-        } elseif (!($ex instanceof \ZPushException) || $ex->showLegalNotice()) {
+        } elseif (!$ex instanceof \ZPushException) {
+            // Internal errors (Doctrine, PostgreSQL, ...) may leak schema or
+            // connection details: keep message and trace in the log only.
+            $cmdinfo = (null !== \Request::GetCommand()) ? sprintf(' processing command <i>%s</i>', $this->str(\Request::GetCommand())) : '';
+            \ZLog::Write(LOGLEVEL_ERROR, sprintf('EAS internal error (%s): %s%s', $exclass, $exceptionMessage, $this->traceSummary($ex)));
+            \ZPush::PrintZPushLegal('Internal server error'.$cmdinfo, '<pre>Internal server error</pre>');
+        } elseif ($ex->showLegalNotice()) {
             $cmdinfo = (null !== \Request::GetCommand()) ? sprintf(' processing command <i>%s</i>', $this->str(\Request::GetCommand())) : '';
             $trace = $this->traceSummary($ex);
             if ('' !== $trace) {
