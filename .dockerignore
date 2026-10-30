@@ -1,0 +1,11 @@
+.git
+.idea
+.env
+.env.*
+!.env.example
+tests/
+var/
+vendor/
+data/
+*.log
+*.cache

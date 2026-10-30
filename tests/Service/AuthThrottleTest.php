@@ -23,6 +23,10 @@ final class AuthThrottleTest extends TestCase
 
     private mixed $forwardedBackup = null;
 
+    private bool $hadRealIp = false;
+
+    private mixed $realIpBackup = null;
+
     private bool $hadRemote = false;
 
     private mixed $remoteBackup = null;
@@ -33,6 +37,8 @@ final class AuthThrottleTest extends TestCase
         $this->throttle = new AuthThrottle(new FilesystemAdapter('test', 0, $this->tmpDir));
         $this->hadForwarded = array_key_exists('HTTP_X_FORWARDED_FOR', $_SERVER);
         $this->forwardedBackup = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? null;
+        $this->hadRealIp = array_key_exists('HTTP_X_REAL_IP', $_SERVER);
+        $this->realIpBackup = $_SERVER['HTTP_X_REAL_IP'] ?? null;
         $this->hadRemote = array_key_exists('REMOTE_ADDR', $_SERVER);
         $this->remoteBackup = $_SERVER['REMOTE_ADDR'] ?? null;
     }
@@ -43,6 +49,12 @@ final class AuthThrottleTest extends TestCase
             $_SERVER['HTTP_X_FORWARDED_FOR'] = $this->forwardedBackup;
         } else {
             unset($_SERVER['HTTP_X_FORWARDED_FOR']);
+        }
+
+        if ($this->hadRealIp) {
+            $_SERVER['HTTP_X_REAL_IP'] = $this->realIpBackup;
+        } else {
+            unset($_SERVER['HTTP_X_REAL_IP']);
         }
 
         if ($this->hadRemote) {
@@ -59,52 +71,51 @@ final class AuthThrottleTest extends TestCase
 
     public function testIsNotBlockedWithoutFailures(): void
     {
-        self::assertFalse($this->throttle->isBlocked('198.51.100.7'));
+        self::assertFalse($this->throttle->isBlocked('198.51.100.7', 'user@example.com'));
     }
 
     public function testBlocksAfterTenFailures(): void
     {
         for ($i = 0; $i < 10; ++$i) {
-            $this->throttle->recordFailure('198.51.100.7');
+            $this->throttle->recordFailure('198.51.100.7', 'user@example.com');
         }
 
-        self::assertTrue($this->throttle->isBlocked('198.51.100.7'));
-        self::assertFalse($this->throttle->isBlocked('198.51.100.8'));
+        self::assertTrue($this->throttle->isBlocked('198.51.100.7', 'user@example.com'));
+        self::assertTrue($this->throttle->isBlocked('198.51.100.8', 'USER@example.com'));
+        self::assertFalse($this->throttle->isBlocked('198.51.100.8', 'other@example.com'));
     }
 
     public function testNineFailuresDoNotBlock(): void
     {
         for ($i = 0; $i < 9; ++$i) {
-            $this->throttle->recordFailure('203.0.113.5');
+            $this->throttle->recordFailure('203.0.113.5', 'user@example.com');
         }
 
-        self::assertFalse($this->throttle->isBlocked('203.0.113.5'));
+        self::assertFalse($this->throttle->isBlocked('203.0.113.5', 'user@example.com'));
     }
 
     public function testResetClearsFailures(): void
     {
         for ($i = 0; $i < 10; ++$i) {
-            $this->throttle->recordFailure('203.0.113.9');
+            $this->throttle->recordFailure('203.0.113.9', 'user@example.com');
         }
 
-        self::assertTrue($this->throttle->isBlocked('203.0.113.9'));
-        $this->throttle->reset('203.0.113.9');
-        self::assertFalse($this->throttle->isBlocked('203.0.113.9'));
+        self::assertTrue($this->throttle->isBlocked('203.0.113.9', 'user@example.com'));
+        $this->throttle->reset('203.0.113.9', 'user@example.com');
+        self::assertFalse($this->throttle->isBlocked('203.0.113.9', 'user@example.com'));
     }
 
-    public function testClientIpPrefersFirstForwardedForEntry(): void
+    public function testClientIpUsesEdgeRealIpAndIgnoresForwardedFor(): void
     {
+        $_SERVER['HTTP_X_REAL_IP'] = '198.51.100.1';
         $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.1, 10.0.0.1';
         $_SERVER['REMOTE_ADDR'] = '10.0.0.2';
         self::assertSame('198.51.100.1', AuthThrottle::clientIp());
 
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = '  ';
+        $_SERVER['HTTP_X_REAL_IP'] = 'not-an-ip';
         self::assertSame('10.0.0.2', AuthThrottle::clientIp());
 
-        unset($_SERVER['HTTP_X_FORWARDED_FOR']);
-        self::assertSame('10.0.0.2', AuthThrottle::clientIp());
-
-        unset($_SERVER['REMOTE_ADDR']);
+        $_SERVER['REMOTE_ADDR'] = 'invalid';
         self::assertSame('unknown', AuthThrottle::clientIp());
     }
 }

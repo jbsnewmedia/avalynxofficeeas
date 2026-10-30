@@ -12,6 +12,7 @@ namespace AvalynxOfficeEas\Service;
 use AvalynxOfficeEas\Db\Model\Account;
 use AvalynxOfficeEas\Db\Model\AccountAddress;
 use AvalynxOfficeEas\Db\Model\Address;
+use AvalynxOfficeEas\Db\Model\EmailAddressLink;
 use AvalynxOfficeEas\Licensing\LicenseState;
 use Doctrine\ORM\EntityManagerInterface;
 
@@ -77,23 +78,61 @@ final readonly class ContactService
         return $address;
     }
 
-    public function update(Address $address, \SyncContact $contact): void
+    public function update(Account $account, Address $address, \SyncContact $contact): Address
     {
         $this->licenseState->assertMutationAllowed('CONTACT_WRITE');
-        $this->contactMapper->applySyncContact($address, $contact);
-        $this->entityManager->flush();
-    }
 
-    public function delete(Address $address): void
-    {
-        $this->licenseState->assertMutationAllowed('CONTACT_WRITE');
-        // The account links are not cascade-removed with the address; load
-        // them explicitly so the rows and the in-memory state stay in sync.
-        foreach ($this->entityManager->getRepository(AccountAddress::class)->findBy(['address' => $address]) as $link) {
-            $this->entityManager->remove($link);
+        $accountLinkRepository = $this->entityManager->getRepository(AccountAddress::class);
+        $accountLink = $accountLinkRepository->findOneBy(['account' => $account, 'address' => $address]);
+        if (!$accountLink instanceof AccountAddress) {
+            throw new \LogicException('Contact is not linked to the synchronized account.');
         }
 
-        $this->entityManager->remove($address);
+        foreach ($accountLinkRepository->findBy(['address' => $address]) as $link) {
+            if ($link instanceof AccountAddress && $link->getAccount() !== $account) {
+                $address = $this->copyContact($address);
+                $this->entityManager->persist($address);
+                $this->entityManager->remove($accountLink);
+                $this->linkAddress($account, $address);
+
+                break;
+            }
+        }
+
+        $this->contactMapper->applySyncContact($address, $contact);
+        $this->entityManager->flush();
+
+        return $address;
+    }
+
+    public function delete(Account $account, Address $address): void
+    {
+        $this->licenseState->assertMutationAllowed('CONTACT_WRITE');
+
+        $accountLinkFound = false;
+        $otherAccountLinkFound = false;
+        foreach ($this->entityManager->getRepository(AccountAddress::class)->findBy(['address' => $address]) as $link) {
+            if (!$link instanceof AccountAddress) {
+                continue;
+            }
+
+            if ($link->getAccount() === $account) {
+                $this->entityManager->remove($link);
+                $accountLinkFound = true;
+            } else {
+                $otherAccountLinkFound = true;
+            }
+        }
+
+        if (!$accountLinkFound) {
+            return;
+        }
+
+        $hasEmailLinks = null !== $this->entityManager->getRepository(EmailAddressLink::class)->findOneBy(['address' => $address]);
+        if (!$otherAccountLinkFound && !$hasEmailLinks) {
+            $this->entityManager->remove($address);
+        }
+
         $this->entityManager->flush();
     }
 
@@ -114,5 +153,19 @@ final readonly class ContactService
         $link->setAccount($account);
         $link->setAddress($address);
         $this->entityManager->persist($link);
+    }
+
+    private function copyContact(Address $address): Address
+    {
+        return (new Address())
+            ->setEmail($address->getEmail())
+            ->setName($address->getName())
+            ->setIsContact($address->isContact())
+            ->setFirstname($address->getFirstname())
+            ->setLastname($address->getLastname())
+            ->setCompany($address->getCompany())
+            ->setBusinessPhone($address->getBusinessPhone())
+            ->setMobilePhone($address->getMobilePhone())
+            ->setHomePhone($address->getHomePhone());
     }
 }

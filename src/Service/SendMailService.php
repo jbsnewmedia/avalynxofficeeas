@@ -108,7 +108,9 @@ final readonly class SendMailService
         $email->setReceivedAt(new \DateTimeImmutable());
         $email->setMessageId((string) $this->header($message, 'message-id'));
 
-        $this->linkHeaderAddresses($email, $message, 'from', EmailAddressType::SENDER);
+        if (!$this->linkHeaderAddresses($email, $message, 'from', EmailAddressType::SENDER, strtolower(trim($account->getEmail())))) {
+            $this->linkAddress($email, $account->getEmail(), null, EmailAddressType::SENDER);
+        }
         $this->linkHeaderAddresses($email, $message, 'to', EmailAddressType::RECIPIENT);
         $this->linkHeaderAddresses($email, $message, 'cc', EmailAddressType::CC);
         $this->linkHeaderAddresses($email, $message, 'bcc', EmailAddressType::BCC);
@@ -119,21 +121,30 @@ final readonly class SendMailService
         return $email;
     }
 
-    private function linkHeaderAddresses(Email $email, \Laminas\Mail\Storage\Message $message, string $headerName, EmailAddressType $type): void
+    private function linkHeaderAddresses(Email $email, \Laminas\Mail\Storage\Message $message, string $headerName, EmailAddressType $type, ?string $requiredAddress = null): bool
     {
         $value = $this->header($message, $headerName);
 
         if (null === $value) {
-            return;
+            return false;
         }
 
         $header = $message->getHeader($headerName);
+        $linked = false;
 
         if ($header instanceof \Laminas\Mail\Header\AbstractAddressList) {
             foreach ($header->getAddressList() as $address) {
-                $this->linkAddress($email, (string) $address->getEmail(), $address->getName(), $type);
+                $emailAddress = trim((string) $address->getEmail(), "<> \t\n\r");
+                if (null !== $requiredAddress && strtolower($emailAddress) !== $requiredAddress) {
+                    continue;
+                }
+
+                $this->linkAddress($email, $emailAddress, $address->getName(), $type);
+                $linked = true;
             }
         }
+
+        return $linked;
     }
 
     private function linkAddress(Email $email, string $emailAddr, ?string $name, EmailAddressType $type): void

@@ -314,7 +314,10 @@ final class EndpointService
         } elseif (!($ex instanceof \ZPushException) || $ex->showLegalNotice()) {
             $cmdinfo = (null !== \Request::GetCommand()) ? sprintf(' processing command <i>%s</i>', $this->str(\Request::GetCommand())) : '';
             $trace = $this->traceSummary($ex);
-            \ZPush::PrintZPushLegal($exclass.$cmdinfo, sprintf('<pre>%s</pre>', $ex->getMessage().$trace));
+            if ('' !== $trace) {
+                \ZLog::Write(LOGLEVEL_ERROR, sprintf('EAS exception trace: %s', $trace));
+            }
+            \ZPush::PrintZPushLegal($exclass.$cmdinfo, sprintf('<pre>%s</pre>', $ex->getMessage()));
         }
 
         // Announce exception to process loop detection

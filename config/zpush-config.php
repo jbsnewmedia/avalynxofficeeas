@@ -15,7 +15,7 @@ declare(strict_types=1);
 define('TIMEZONE', 'Europe/Berlin');
 define('BASE_PATH', dirname(__DIR__).'/vendor/z-push/z-push-dev/src/');
 define('SCRIPT_TIMEOUT', 0);
-define('USE_CUSTOM_REMOTE_IP_HEADER', false);
+define('USE_CUSTOM_REMOTE_IP_HEADER', 'HTTP_X_REAL_IP');
 define('CERTIFICATE_OWNER_PARAMETER', 'SSL_CLIENT_S_DN_CN');
 define('USE_FULLEMAIL_FOR_LOGIN', true);
 define('STATE_MACHINE', 'FILE');

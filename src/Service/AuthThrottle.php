@@ -13,8 +13,8 @@ use Symfony\Component\Cache\Adapter\AdapterInterface;
 
 /**
  * Brute-force guard for the EAS endpoint: counts failed authentications per
- * client IP in a time window and blocks further attempts while the limit is
- * exceeded. Successful authentication clears the counter.
+ * client IP and normalized username, blocking either key while its limit is
+ * exceeded. Successful authentication clears both counters.
  *
  * Ported from the mailer project (App\Eas\Security\EasAuthThrottle) to the
  * Z-Push backend context.
@@ -28,59 +28,61 @@ final readonly class AuthThrottle
     {
     }
 
-    public function isBlocked(string $clientIp): bool
+    public function isBlocked(string $clientIp, string $username): bool
     {
-        return $this->failures($clientIp) >= self::MAX_FAILURES;
+        return $this->failures('ip', $clientIp) >= self::MAX_FAILURES
+            || $this->failures('user', $username) >= self::MAX_FAILURES;
     }
 
-    public function recordFailure(string $clientIp): void
+    public function recordFailure(string $clientIp, string $username): void
     {
-        $key = $this->key($clientIp);
-        $item = $this->cache->getItem($key);
-        $current = $item->get();
-        $item->set(is_int($current) ? $current + 1 : 1);
-        $item->expiresAfter(self::WINDOW_SECONDS);
-        $this->cache->save($item);
+        $this->increment('ip', $clientIp);
+        $this->increment('user', $username);
     }
 
-    public function reset(string $clientIp): void
+    public function reset(string $clientIp, string $username): void
     {
-        $this->cache->deleteItem($this->key($clientIp));
+        $this->cache->deleteItem($this->key('ip', $clientIp));
+        $this->cache->deleteItem($this->key('user', $username));
     }
 
     /**
-     * Resolves the client IP for the throttle key. Devices reach the EAS
-     * container through the stack nginx and an optional upstream TLS proxy,
-     * both of which append to X-Forwarded-For - the first entry is the
-     * original client.
+     * Resolves the client IP from the edge proxy's overwritten X-Real-IP
+     * header; client-controlled X-Forwarded-For is deliberately ignored.
      */
     public static function clientIp(): string
     {
-        $forwarded = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
-
-        if (is_string($forwarded) && '' !== trim($forwarded)) {
-            $first = trim(explode(',', $forwarded)[0]);
-
-            if ('' !== $first) {
-                return $first;
-            }
+        $realIp = $_SERVER['HTTP_X_REAL_IP'] ?? '';
+        if (is_string($realIp) && false !== filter_var($realIp, FILTER_VALIDATE_IP)) {
+            return $realIp;
         }
 
         $remote = $_SERVER['REMOTE_ADDR'] ?? '';
 
-        return is_string($remote) && '' !== $remote ? $remote : 'unknown';
+        return is_string($remote) && false !== filter_var($remote, FILTER_VALIDATE_IP) ? $remote : 'unknown';
     }
 
-    private function key(string $clientIp): string
+    private function key(string $scope, string $identifier): string
     {
-        return 'eas_auth_fail_'.md5($clientIp);
+        $normalized = 'user' === $scope ? mb_strtolower(trim($identifier)) : trim($identifier);
+
+        return 'eas_auth_fail_'.$scope.'_'.hash('sha256', $normalized);
     }
 
-    private function failures(string $clientIp): int
+    private function failures(string $scope, string $identifier): int
     {
-        $item = $this->cache->getItem($this->key($clientIp));
+        $item = $this->cache->getItem($this->key($scope, $identifier));
         $value = $item->get();
 
         return is_int($value) ? $value : 0;
+    }
+
+    private function increment(string $scope, string $identifier): void
+    {
+        $item = $this->cache->getItem($this->key($scope, $identifier));
+        $current = $item->get();
+        $item->set(is_int($current) ? $current + 1 : 1);
+        $item->expiresAfter(self::WINDOW_SECONDS);
+        $this->cache->save($item);
     }
 }

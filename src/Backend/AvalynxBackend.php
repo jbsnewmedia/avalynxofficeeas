@@ -98,10 +98,11 @@ final class AvalynxBackend extends \BackendDiff
         }
 
         // Brute-force guard: block further attempts from a client IP that
-        // exceeded the failure limit; a successful logon clears the counter.
+        // exceeded the failure limit, or a username with repeated failures.
         $clientIp = AuthThrottle::clientIp();
+        $userKey = mb_strtolower(trim($username));
 
-        if ($this->authThrottle->isBlocked($clientIp)) {
+        if ($this->authThrottle->isBlocked($clientIp, $userKey)) {
             \ZLog::Write(LOGLEVEL_WARN, sprintf('AvalynxBackend->Logon(): blocked, too many failed attempts from %s', $clientIp));
 
             return false;
@@ -110,13 +111,13 @@ final class AvalynxBackend extends \BackendDiff
         $context = $this->userResolver->resolve($username, $password);
 
         if (null === $context) {
-            $this->authThrottle->recordFailure($clientIp);
+            $this->authThrottle->recordFailure($clientIp, $userKey);
             \ZLog::Write(LOGLEVEL_WARN, sprintf("AvalynxBackend->Logon('%s'): failed", $username));
 
             return false;
         }
 
-        $this->authThrottle->reset($clientIp);
+        $this->authThrottle->reset($clientIp, $userKey);
 
         $this->context = $context;
         $this->wasteBasket = null;
@@ -477,8 +478,11 @@ final class AvalynxBackend extends \BackendDiff
                 }
 
                 if (null !== $contact) {
-                    $this->contactService->update($contact, $message);
-                    $address = $contact;
+                    $contactAccount = is_string($folderid) ? $this->accountFromContactsServerId($folderid) : null;
+                    if (null === $contactAccount) {
+                        return false;
+                    }
+                    $address = $this->contactService->update($contactAccount, $contact, $message);
                 } else {
                     $address = $this->contactService->create($this->accountFromFolderIdOrFail($folderid), $message);
                 }
@@ -556,10 +560,14 @@ final class AvalynxBackend extends \BackendDiff
     public function DeleteMessage($folderid, $id, $contentparameters): bool
     {
         try {
+            $contactAccount = is_string($folderid) ? $this->accountFromContactsServerId($folderid) : null;
             $contact = $this->contactFromServerId($folderid, $id);
 
             if (null !== $contact) {
-                $this->contactService->delete($contact);
+                if (null === $contactAccount) {
+                    return false;
+                }
+                $this->contactService->delete($contactAccount, $contact);
 
                 return true;
             }
