@@ -394,12 +394,12 @@ final class EndpointService
 
     private function prepareDirectories(): void
     {
-        $stateDir = rtrim($this->strOr($_SERVER['EAS_STATE_DIR'] ?? null, 'var/eas-state'), '/');
-        $logDir = rtrim($this->strOr($_SERVER['EAS_LOG_DIR'] ?? null, 'var/log/eas'), '/');
+        $stateDir = rtrim($this->strOr(\AvalynxOfficeEas\Db\Database::env('EAS_STATE_DIR'), 'var/eas-state'), '/');
+        $logDir = rtrim($this->strOr(\AvalynxOfficeEas\Db\Database::env('EAS_LOG_DIR'), 'var/log/eas'), '/');
 
         foreach ([$stateDir, $logDir] as $directory) {
             if (!is_dir($directory)) {
-                @mkdir($directory, 0777, true);
+                @mkdir($directory, 0770, true);
             }
         }
 

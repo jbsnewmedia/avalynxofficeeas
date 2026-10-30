@@ -42,7 +42,9 @@ final readonly class LastAuthenticationRecorder
             return;
         }
 
-        $now = new \DateTimeImmutable('now');
+        // Stored explicitly in UTC, independent of the PHP default timezone
+        // (Z-Push sets TIMEZONE), so the core reads a consistent value.
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
 
         $this->entityManager->getConnection()->executeStatement(
             'UPDATE app_user SET last_auth_at = :at'

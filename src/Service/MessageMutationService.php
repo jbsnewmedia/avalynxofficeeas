@@ -86,14 +86,31 @@ final readonly class MessageMutationService
         return false;
     }
 
+    /**
+     * Emptying the wastebasket removes the mails permanently; emptying any
+     * other folder moves its mails into the Papierkorb (recoverable), the
+     * same semantics as delete().
+     */
     public function emptyFolder(Account $account, Folder $folder): int
     {
         $this->licenseState->assertMutationAllowed('MAIL_DELETE');
         $emails = $this->emailsForFolder($account, $folder);
 
+        if ($folder->hasFunction(FolderFunction::TRASH->value)) {
+            foreach ($emails as $email) {
+                $this->removeLinks($email);
+                $this->entityManager->remove($email);
+            }
+
+            $this->entityManager->flush();
+
+            return count($emails);
+        }
+
+        $trash = $this->folderService->ensureSystemFolder($account, FolderFunction::TRASH);
+
         foreach ($emails as $email) {
-            $this->removeLinks($email);
-            $this->entityManager->remove($email);
+            $this->folderService->moveEmailToFolder($email, $trash);
         }
 
         $this->entityManager->flush();

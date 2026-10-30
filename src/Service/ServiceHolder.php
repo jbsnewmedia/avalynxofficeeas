@@ -56,7 +56,7 @@ final class ServiceHolder
             Database::env('ATTACHMENT_STORAGE_DIR', 'data/attachments') ?? 'data/attachments',
             max(1, (int) (Database::env('ATTACHMENT_STORAGE_SEGMENT_LENGTH', '3') ?? 3)),
             max(1, (int) (Database::env('ATTACHMENT_STORAGE_SEGMENT_DEPTH', '3') ?? 3)),
-            max(1024, (int) (Database::env('ATTACHMENT_STORAGE_MAX_BYTES', '65536') ?? 65536)),
+            max(1024, (int) (Database::env('ATTACHMENT_STORAGE_MAX_BYTES', '26214400') ?? 26214400)),
         );
         $licenseState = new LicenseState($entityManager->getConnection());
         $contactMapper = new ContactMapper();

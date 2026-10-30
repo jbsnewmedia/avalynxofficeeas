@@ -29,9 +29,16 @@ It is an **independent extension, not part of avalynxoffice**:
 
 ## Login and account scope
 
-The device logs in with an **application user** — the same e-mail address and
-password as the AvalynxOffice web login. Mailbox (account) or alias addresses
-are not accepted as usernames: a device session always belongs to a user.
+The device logs in with an **application user** — the e-mail address of the
+AvalynxOffice web login — and an **app password** created in the web client
+under *Profile → App passwords* (`/profile/app-passwords`). The web login
+password itself is deliberately **not** accepted: it would be stored on every
+device and could not be revoked per device. App passwords are shown once,
+stored as `password_hash()` digests (`app_user_app_password`), can be typed
+with or without their dashes/case, and are revoked individually in the
+profile or all at once by a password reset. Mailbox (account) or alias
+addresses are not accepted as usernames: a device session always belongs to
+a user.
 
 The user receives **every account assigned to them** in the office: all mail
 folders plus the contacts and calendar folder of each account are
@@ -56,8 +63,14 @@ integration suite and a live end-to-end FolderSync through the compose stack.
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection (same database as avalynxoffice) |
 | `ATTACHMENT_STORAGE_DIR` | attachment storage path, **shared volume** with the core (default `data/attachments`) |
+| `ATTACHMENT_STORAGE_MAX_BYTES` | maximum size of a single attachment sent from a device in bytes (default `26214400` = 25 MB, minimum `1024`); larger attachments abort the submission with `MailSubmissionFailed` instead of being dropped silently |
 | `EAS_STATE_DIR` | Z-Push state directory (default `var/eas-state`) |
 | `EAS_LOG_DIR` | Z-Push log directory (default `var/log/eas`) |
+| `EAS_LOGLEVEL` | Z-Push log level (`1` fatal, `2` error, `4` warn, `8` info, `16` debug, `32` wbxml; default `8`) |
+
+All variables can come from the real environment (Docker/compose) or from a
+local `.env` next to `composer.json`; `.env` values never override variables
+that are already set.
 
 ## Deployment
 

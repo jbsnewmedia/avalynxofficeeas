@@ -21,6 +21,8 @@ use AvalynxOfficeEas\Db\Model\EmailAttachmentLink;
 use AvalynxOfficeEas\Db\Model\EmailBodyLink;
 use AvalynxOfficeEas\Licensing\LicenseState;
 use AvalynxOfficeEas\Mail\AttachmentStorage;
+use AvalynxOfficeEas\Mail\MimeParser;
+use AvalynxOfficeEas\Mail\MimePart;
 use Doctrine\ORM\EntityManagerInterface;
 
 /**
@@ -37,12 +39,15 @@ final readonly class SendMailService
     /** @var \Doctrine\ORM\EntityRepository<Address> */
     private \Doctrine\ORM\EntityRepository $addressRepository;
 
+    private MimeParser $mimeParser;
+
     public function __construct(
         private EntityManagerInterface $entityManager,
         private FolderService $folderService,
         private AttachmentStorage $attachmentStorage,
         private LicenseState $licenseState,
     ) {
+        $this->mimeParser = new MimeParser();
         $this->addressRepository = $this->entityManager->getRepository(Address::class);
     }
 
@@ -58,7 +63,7 @@ final readonly class SendMailService
             $clientKey = is_string($sendMail->clientid) ? $sendMail->clientid : 'eas';
             $email = $this->convertMimeToEmail($mime, $account, $clientKey);
         } catch (\Throwable $throwable) {
-            throw new \RuntimeException(sprintf('Unable to parse message: %s', $throwable->getMessage()), 0, $throwable);
+            throw new \RuntimeException(sprintf('Unable to process message: %s', $throwable->getMessage()), 0, $throwable);
         }
 
         // The email is persisted before the folder synchronization flushes:
@@ -98,15 +103,15 @@ final readonly class SendMailService
      */
     private function convertMimeToEmail(string $mime, Account $account, string $clientKey): Email
     {
-        $message = new \Laminas\Mail\Storage\Message(['raw' => $mime]);
+        $message = $this->mimeParser->parse($mime);
         $email = new Email();
         $email->setAccount($account);
         $email->setIsOutgoing(true)->setIsRead(true);
         $email->setImportKey('eas|'.$clientKey);
         $email->setContentHash(hash('sha256', $mime));
-        $email->setSubject((string) $this->header($message, 'subject'));
+        $email->setSubject((string) $message->getHeader('subject'));
         $email->setReceivedAt(new \DateTimeImmutable());
-        $email->setMessageId((string) $this->header($message, 'message-id'));
+        $email->setMessageId((string) $message->getHeader('message-id'));
 
         if (!$this->linkHeaderAddresses($email, $message, 'from', EmailAddressType::SENDER, strtolower(trim($account->getEmail())))) {
             $this->linkAddress($email, $account->getEmail(), null, EmailAddressType::SENDER);
@@ -121,27 +126,18 @@ final readonly class SendMailService
         return $email;
     }
 
-    private function linkHeaderAddresses(Email $email, \Laminas\Mail\Storage\Message $message, string $headerName, EmailAddressType $type, ?string $requiredAddress = null): bool
+    private function linkHeaderAddresses(Email $email, MimePart $message, string $headerName, EmailAddressType $type, ?string $requiredAddress = null): bool
     {
-        $value = $this->header($message, $headerName);
-
-        if (null === $value) {
-            return false;
-        }
-
-        $header = $message->getHeader($headerName);
         $linked = false;
 
-        if ($header instanceof \Laminas\Mail\Header\AbstractAddressList) {
-            foreach ($header->getAddressList() as $address) {
-                $emailAddress = trim((string) $address->getEmail(), "<> \t\n\r");
-                if (null !== $requiredAddress && strtolower($emailAddress) !== $requiredAddress) {
-                    continue;
-                }
-
-                $this->linkAddress($email, $emailAddress, $address->getName(), $type);
-                $linked = true;
+        foreach ($message->getAddresses($headerName) as $address) {
+            $emailAddress = trim($address['email'], "<> \t\n\r");
+            if (null !== $requiredAddress && strtolower($emailAddress) !== $requiredAddress) {
+                continue;
             }
+
+            $this->linkAddress($email, $emailAddress, $address['name'], $type);
+            $linked = true;
         }
 
         return $linked;
@@ -173,33 +169,19 @@ final readonly class SendMailService
         }
     }
 
-    private function extractParts(\Laminas\Mail\Storage\Message $message, Email $email): void
+    private function extractParts(MimePart $message, Email $email): void
     {
         $textBody = '';
         $htmlBody = '';
 
         if ($message->isMultipart()) {
-            /** @var \Laminas\Mail\Storage\Part $part */
-            foreach (new \RecursiveIteratorIterator($message, \RecursiveIteratorIterator::SELF_FIRST) as $part) {
-                $contentType = (string) $this->header($part, 'content-type');
-                $disposition = (string) $this->header($part, 'content-disposition');
-
-                if (str_contains($disposition, 'attachment') || $this->hasFileName($part)) {
-                    $this->storeAttachmentPart($part, $email, $this->partMimeType($contentType));
-
-                    continue;
-                }
-
-                $data = $this->getPartContent($part);
-
-                if (str_starts_with(strtolower($contentType), 'text/html')) {
-                    $htmlBody .= $data;
-                } elseif (str_starts_with(strtolower($contentType), 'text/plain')) {
-                    $textBody .= $data;
-                }
-            }
+            $this->collectParts($message, $email, $textBody, $htmlBody);
+        } elseif ($message->isAttachment()) {
+            $this->storeAttachmentPart($message, $email);
+        } elseif ('text/html' === $message->getContentType()) {
+            $htmlBody = $message->getTextBody();
         } else {
-            $textBody = $this->getPartContent($message);
+            $textBody = $message->getTextBody();
         }
 
         $this->addBody($email, $htmlBody, BodyContentType::HTML);
@@ -207,6 +189,31 @@ final readonly class SendMailService
 
         if (null === $email->getPreviewBody()) {
             $email->setPreviewBody(mb_substr($textBody, 0, 500));
+        }
+    }
+
+    private function collectParts(MimePart $parent, Email $email, string &$textBody, string &$htmlBody): void
+    {
+        foreach ($parent->getParts() as $part) {
+            if ($part->isMultipart()) {
+                $this->collectParts($part, $email, $textBody, $htmlBody);
+
+                continue;
+            }
+
+            if ($part->isAttachment()) {
+                $this->storeAttachmentPart($part, $email);
+
+                continue;
+            }
+
+            $contentType = $part->getContentType();
+
+            if ('text/html' === $contentType) {
+                $htmlBody .= $part->getTextBody();
+            } elseif ('text/plain' === $contentType) {
+                $textBody .= $part->getTextBody();
+            }
         }
     }
 
@@ -232,107 +239,40 @@ final readonly class SendMailService
         }
     }
 
-    private function getPartContent(\Laminas\Mail\Storage\Part $part): string
+    /**
+     * @throws \RuntimeException when the attachment exceeds the configured limit or cannot be stored
+     */
+    private function storeAttachmentPart(MimePart $part, Email $email): void
     {
-        $data = (string) $part->getContent();
-
-        $encoding = strtolower((string) $this->header($part, 'content-transfer-encoding'));
-
-        return match ($encoding) {
-            'quoted-printable' => quoted_printable_decode($data),
-            'base64' => base64_decode($data, true) ?: '',
-            default => $data,
-        };
-    }
-
-    private function hasFileName(\Laminas\Mail\Storage\Part $part): bool
-    {
-        return null !== $this->fileName($part);
-    }
-
-    private function fileName(\Laminas\Mail\Storage\Part $part): ?string
-    {
-        $headers = $part->getHeaders();
-        $disposition = $headers->has('content-disposition') ? $headers->get('content-disposition') : null;
-
-        if ($disposition instanceof \Laminas\Mail\Header\HeaderInterface) {
-            $name = $this->parameterFromValue($disposition->getFieldValue(), 'filename');
-
-            if (null !== $name) {
-                return $name;
-            }
-        }
-
-        $contentType = $headers->has('content-type') ? $headers->get('content-type') : null;
-
-        if ($contentType instanceof \Laminas\Mail\Header\ContentType) {
-            $name = $contentType->getParameter('name');
-
-            if (is_string($name) && '' !== $name) {
-                return $name;
-            }
-        }
-
-        return null;
-    }
-
-    private function parameterFromValue(string $value, string $parameter): ?string
-    {
-        if (1 !== preg_match(sprintf('/%s\s*=\s*(?:"([^"]+)"|([^\s;]+))/i', preg_quote($parameter, '/')), $value, $matches)) {
-            return null;
-        }
-
-        $name = '' !== $matches[1] ? $matches[1] : $matches[2];
-
-        return '' !== $name ? $name : null;
-    }
-
-    private function header(\Laminas\Mail\Storage\Part $part, string $name): ?string
-    {
-        try {
-            $headers = $part->getHeaders();
-
-            if (!$headers->has($name)) {
-                return null;
-            }
-
-            $header = $headers->get($name);
-
-            if (!$header instanceof \Laminas\Mail\Header\HeaderInterface) {
-                return null;
-            }
-
-            return $header->getFieldValue();
-        } catch (\Throwable) {
-            return null;
-        }
-    }
-
-    private function partMimeType(string $contentType): string
-    {
-        $type = trim(strtolower($contentType));
-
-        return '' !== $type ? strtok($type, ';') ?: $type : 'application/octet-stream';
-    }
-
-    private function storeAttachmentPart(\Laminas\Mail\Storage\Part $part, Email $email, string $contentType): void
-    {
-        $data = $this->getPartContent($part);
+        $data = $part->getDecodedBody();
 
         if ('' === $data) {
             return;
         }
 
+        $name = $part->getFileName() ?? 'attachment.bin';
+        $maxBytes = $this->attachmentStorage->getMaxBytes();
+
+        if (strlen($data) > $maxBytes) {
+            $message = sprintf('Attachment "%s" (%d bytes) exceeds the limit of %d bytes', $name, strlen($data), $maxBytes);
+            $this->log($message);
+
+            throw new \RuntimeException($message);
+        }
+
         $attachment = new Attachment();
-        $attachment->setName($this->fileName($part) ?? 'attachment.bin');
+        $attachment->setName($name);
         $attachment->setSize(strlen($data));
-        $attachment->setMimeType($contentType);
+        $attachment->setMimeType($part->getContentType());
         $attachment->setSha1(sha1($data));
 
         try {
             $attachment->setFilePath($this->attachmentStorage->store($attachment, $data));
-        } catch (\RuntimeException) {
-            return;
+        } catch (\RuntimeException $exception) {
+            $message = sprintf('Attachment "%s" could not be stored: %s', $name, $exception->getMessage());
+            $this->log($message);
+
+            throw new \RuntimeException($message, 0, $exception);
         }
 
         $this->entityManager->persist($attachment);
@@ -342,5 +282,12 @@ final readonly class SendMailService
         $link->setAttachment($attachment);
         $email->addEmailAttachment($link);
         $this->entityManager->persist($link);
+    }
+
+    private function log(string $message): void
+    {
+        if (class_exists(\ZLog::class) && defined('LOGLEVEL_WARN')) {
+            \ZLog::Write(LOGLEVEL_WARN, sprintf('SendMailService: %s', $message));
+        }
     }
 }

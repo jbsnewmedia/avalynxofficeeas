@@ -10,7 +10,12 @@ declare(strict_types=1);
  * (z-push/src/config.php, AGPL-3.0) with environment-driven overrides. All
  * constants must be defined here because Z-Push uses unguarded define()
  * calls and undefined constants are fatal errors on PHP 8.5+.
+ *
+ * Environment values are read via Database::env() ($_ENV, $_SERVER, getenv),
+ * so .env based setups and real environment variables behave identically.
  */
+
+use AvalynxOfficeEas\Db\Database;
 
 define('TIMEZONE', 'Europe/Berlin');
 define('BASE_PATH', dirname(__DIR__).'/vendor/z-push/z-push-dev/src/');
@@ -19,10 +24,10 @@ define('USE_CUSTOM_REMOTE_IP_HEADER', 'HTTP_X_REAL_IP');
 define('CERTIFICATE_OWNER_PARAMETER', 'SSL_CLIENT_S_DN_CN');
 define('USE_FULLEMAIL_FOR_LOGIN', true);
 define('STATE_MACHINE', 'FILE');
-define('STATE_DIR', rtrim(($_SERVER['EAS_STATE_DIR'] ?? 'var/eas-state'), '/').'/');
+define('STATE_DIR', rtrim(Database::env('EAS_STATE_DIR', 'var/eas-state') ?? 'var/eas-state', '/').'/');
 define('IPC_PROVIDER', '');
 define('LOGBACKEND', 'filelog');
-define('LOGLEVEL', (int) ($_SERVER['EAS_LOGLEVEL'] ?? LOGLEVEL_INFO));
+define('LOGLEVEL', (int) (Database::env('EAS_LOGLEVEL', (string) LOGLEVEL_INFO) ?? LOGLEVEL_INFO));
 define('LOGAUTHFAIL', true);
 define('LOGUSERLEVEL', LOGLEVEL_DEVICEID);
 /*
@@ -31,7 +36,7 @@ define('LOGUSERLEVEL', LOGLEVEL_DEVICEID);
  */
 global $specialLogUsers, $additionalFolders;
 $specialLogUsers = [];
-define('LOGFILEDIR', rtrim(($_SERVER['EAS_LOG_DIR'] ?? 'var/log/eas'), '/').'/');
+define('LOGFILEDIR', rtrim(Database::env('EAS_LOG_DIR', 'var/log/eas') ?? 'var/log/eas', '/').'/');
 define('LOGFILE', LOGFILEDIR.'z-push.log');
 define('LOGERRORFILE', LOGFILEDIR.'z-push-error.log');
 define('LOG_SYSLOG_HOST', false);

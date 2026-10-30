@@ -12,6 +12,7 @@ namespace AvalynxOfficeEas\Tests\Backend;
 use AvalynxOfficeEas\Backend\AvalynxBackend;
 use AvalynxOfficeEas\Db\Model\Email;
 use AvalynxOfficeEas\Db\Model\LicenseState;
+use AvalynxOfficeEas\Service\ServiceHolder;
 use AvalynxOfficeEas\Tests\Support\SyncProps;
 use AvalynxOfficeEas\Tests\Support\TestEnvironment;
 use PHPUnit\Framework\TestCase;
@@ -48,6 +49,46 @@ final class AvalynxBackendTest extends TestCase
         self::assertFalse($this->backend->Logon('nobody@example.com', '', 'admin'));
     }
 
+    public function testLogonRejectsWebPasswordAndAcceptsOnlyAppPasswords(): void
+    {
+        // The web login password must never work on a device.
+        self::assertFalse($this->backend->Logon('admin@example.com', '', self::SEED_WEB_PASSWORD));
+
+        // App passwords are case-insensitive and may be typed with or
+        // without the dashes/spaces of the "xxxxx-xxxxx-..." display form.
+        self::assertTrue(new AvalynxBackend()->Logon('admin@example.com', '', 'AD-MIN'));
+        self::assertTrue(new AvalynxBackend()->Logon('admin@example.com', '', 'ad min'));
+    }
+
+    public function testLogonRejectsRevokedAppPasswordAndRecordsUsage(): void
+    {
+        self::em()->clear();
+        $rows = self::em()->getRepository(\AvalynxOfficeEas\Db\Model\UserAppPassword::class)->findAll();
+        self::assertCount(1, $rows);
+        $row = $rows[0];
+
+        // setUp() logged on successfully -> last use recorded.
+        self::assertInstanceOf(\DateTimeImmutable::class, $row->getLastUsedAt());
+
+        $row->setRevokedAt(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+        self::em()->flush();
+        self::em()->clear();
+
+        self::assertFalse(new AvalynxBackend()->Logon('admin@example.com', '', self::SEED_APP_PASSWORD));
+
+        // A fresh, second app password works independently of the revoked one.
+        $user = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $this->fixture['user']->getId());
+        self::assertNotNull($user);
+        $second = new \AvalynxOfficeEas\Db\Model\UserAppPassword();
+        $second->setUser($user)->setLabel('Second')->setPasswordHash(password_hash('second', PASSWORD_BCRYPT));
+        self::em()->persist($second);
+        self::em()->flush();
+        self::em()->clear();
+
+        self::assertTrue(new AvalynxBackend()->Logon('admin@example.com', '', 'SECOND'));
+        self::assertFalse(new AvalynxBackend()->Logon('admin@example.com', '', self::SEED_APP_PASSWORD));
+    }
+
     public function testLogonRejectsAccountAddressAsUsername(): void
     {
         // The account (mailbox) address is not a username: devices log in
@@ -65,7 +106,7 @@ final class AvalynxBackendTest extends TestCase
 
         self::assertNotNull($user);
         self::assertInstanceOf(\DateTimeImmutable::class, $user->getLastAuthAt());
-        self::assertLessThanOrEqual(5, time() - $user->getLastAuthAt()->getTimestamp());
+        self::assertLessThanOrEqual(5, time() - $this->storedAsUtc($user->getLastAuthAt())->getTimestamp());
     }
 
     public function testLogonRefreshesStaleSeatActivity(): void
@@ -74,7 +115,7 @@ final class AvalynxBackendTest extends TestCase
         $userId = $this->fixture['user']->getId();
         $user = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
         self::assertNotNull($user);
-        $user->setLastAuthAt(new \DateTimeImmutable('-2 days'));
+        $user->setLastAuthAt(new \DateTimeImmutable('-2 days', new \DateTimeZone('UTC')));
         self::em()->flush();
         self::em()->clear();
 
@@ -85,14 +126,24 @@ final class AvalynxBackendTest extends TestCase
         $reloaded = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
         self::assertNotNull($reloaded);
         self::assertNotNull($reloaded->getLastAuthAt());
-        self::assertGreaterThan(new \DateTimeImmutable('-1 hour')->getTimestamp(), $reloaded->getLastAuthAt()->getTimestamp());
+        self::assertGreaterThan(new \DateTimeImmutable('-1 hour')->getTimestamp(), $this->storedAsUtc($reloaded->getLastAuthAt())->getTimestamp());
+    }
+
+    /**
+     * last_auth_at is a timezone-less column written in UTC (the core runs
+     * in UTC); Doctrine hydrates it in the Z-Push default timezone, so the
+     * wall-clock value is re-interpreted as UTC for comparisons.
+     */
+    private function storedAsUtc(\DateTimeImmutable $stored): \DateTimeImmutable
+    {
+        return new \DateTimeImmutable($stored->format('Y-m-d H:i:s'), new \DateTimeZone('UTC'));
     }
 
     public function testLogonKeepsRecentSeatActivityUnchanged(): void
     {
         self::em()->clear();
         $userId = $this->fixture['user']->getId();
-        $recent = new \DateTimeImmutable('-30 minutes');
+        $recent = new \DateTimeImmutable('-30 minutes', new \DateTimeZone('UTC'));
         $user = self::em()->find(\AvalynxOfficeEas\Db\Model\User::class, $userId);
         self::assertNotNull($user);
         $user->setLastAuthAt($recent);
@@ -256,6 +307,150 @@ final class AvalynxBackendTest extends TestCase
 
         // A repeated import of the same client id does not create duplicates.
         self::assertFalse($this->backend->SendMail($sendMail));
+    }
+
+    public function testSendMailStoresMultipartMessageWithAttachment(): void
+    {
+        $sendMail = new \SyncSendMail();
+        $sendMail->clientid = 'test-client-mime';
+        $sendMail->mime = implode("\r\n", [
+            'From: Info <info@example.com>',
+            'To: "Doe, Jane" <jane@example.com>, bob@example.net',
+            'Cc: =?UTF-8?Q?J=C3=BCrgen?= <juergen@example.com>',
+            'Reply-To: support@example.com',
+            'Subject: =?UTF-8?B?QW5oYW5nIMOEbmRlcnVuZw==?=',
+            'Content-Type: multipart/mixed; boundary="outer"',
+            '',
+            '--outer',
+            'Content-Type: multipart/alternative; boundary="inner"',
+            '',
+            '--inner',
+            'Content-Type: text/plain; charset=utf-8',
+            'Content-Transfer-Encoding: quoted-printable',
+            '',
+            'Text =E2=82=AC',
+            '--inner',
+            'Content-Type: text/html; charset=utf-8',
+            '',
+            '<p>Html €</p>',
+            '--inner--',
+            '--outer',
+            'Content-Type: text/plain; name="notes.txt"',
+            'Content-Disposition: attachment; filename="notes.txt"',
+            'Content-Transfer-Encoding: base64',
+            '',
+            base64_encode('attachment payload'),
+            '--outer--',
+            '',
+        ]);
+
+        self::assertTrue($this->backend->SendMail($sendMail));
+
+        self::em()->clear();
+        $email = self::em()->getRepository(Email::class)->findOneBy(['importKey' => 'eas|test-client-mime']);
+        self::assertNotNull($email);
+        self::assertSame('Anhang Änderung', $email->getSubject());
+
+        $addresses = [];
+        foreach ($email->getEmailAddresses() as $link) {
+            $addresses[$link->getType()->value][] = [$link->getAddress()?->getEmail(), $link->getAddress()?->getName()];
+        }
+        self::assertSame([['info@example.com', 'Info']], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::SENDER->value] ?? []);
+        self::assertSame([['jane@example.com', 'Doe, Jane'], ['bob@example.net', null]], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::RECIPIENT->value] ?? []);
+        self::assertSame([['juergen@example.com', 'Jürgen']], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::CC->value] ?? []);
+        self::assertSame([['support@example.com', null]], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::REPLY_TO->value] ?? []);
+
+        $bodies = [];
+        foreach ($email->getEmailBodies() as $link) {
+            $bodies[$link->getContentType()->value] = $link->getBody()?->getContent();
+        }
+        self::assertSame('Text €', $bodies[\AvalynxOfficeEas\Db\Model\BodyContentType::TEXT->value] ?? null);
+        self::assertSame('<p>Html €</p>', $bodies[\AvalynxOfficeEas\Db\Model\BodyContentType::HTML->value] ?? null);
+
+        $attachments = $email->getEmailAttachments();
+        self::assertCount(1, $attachments);
+        $attachment = $attachments->first() instanceof \AvalynxOfficeEas\Db\Model\EmailAttachmentLink ? $attachments->first()->getAttachment() : null;
+        self::assertNotNull($attachment);
+        self::assertSame('notes.txt', $attachment->getName());
+        self::assertSame('text/plain', $attachment->getMimeType());
+        self::assertSame(strlen('attachment payload'), $attachment->getSize());
+    }
+
+    public function testSendMailRejectsAttachmentAboveLimit(): void
+    {
+        // Re-bootstrap with the smallest allowed attachment limit (1 KiB).
+        $previous = $_ENV['ATTACHMENT_STORAGE_MAX_BYTES'] ?? null;
+        $_ENV['ATTACHMENT_STORAGE_MAX_BYTES'] = '1024';
+
+        try {
+            ServiceHolder::reset();
+            ServiceHolder::bootstrap(dirname(__DIR__, 2), self::em());
+            $backend = new AvalynxBackend();
+            self::assertTrue($backend->Logon('admin@example.com', '', 'admin'));
+
+            $sendMail = new \SyncSendMail();
+            $sendMail->clientid = 'test-client-oversize';
+            $sendMail->mime = implode("\r\n", [
+                'From: info@example.com',
+                'To: recipient@example.com',
+                'Subject: Too large',
+                'Content-Type: multipart/mixed; boundary="b"',
+                '',
+                '--b',
+                'Content-Type: text/plain',
+                '',
+                'body',
+                '--b',
+                'Content-Type: application/octet-stream; name="big.bin"',
+                'Content-Disposition: attachment; filename="big.bin"',
+                'Content-Transfer-Encoding: base64',
+                '',
+                base64_encode(str_repeat('x', 2048)),
+                '--b--',
+                '',
+            ]);
+
+            try {
+                $backend->SendMail($sendMail);
+                self::fail('Oversized attachments must abort the submission.');
+            } catch (\StatusException $exception) {
+                self::assertSame(SYNC_COMMONSTATUS_MAILSUBMISSIONFAILED, $exception->getCode());
+            }
+
+            // Nothing was stored.
+            self::em()->clear();
+            self::assertNull(self::em()->getRepository(Email::class)->findOneBy(['importKey' => 'eas|test-client-oversize']));
+        } finally {
+            if (null === $previous) {
+                unset($_ENV['ATTACHMENT_STORAGE_MAX_BYTES']);
+            } else {
+                $_ENV['ATTACHMENT_STORAGE_MAX_BYTES'] = $previous;
+            }
+        }
+    }
+
+    public function testEmptyFolderMovesMailsToWasteBasketAndEmptyingWasteBasketDeletesPermanently(): void
+    {
+        self::assertTrue($this->backend->EmptyFolder($this->inboxServerId()));
+
+        // Emptying a regular folder is recoverable: the mail is moved into the Papierkorb.
+        self::em()->clear();
+        $email = self::em()->find(Email::class, $this->fixture['email']->getId());
+        self::assertNotNull($email);
+        $folderNames = [];
+        foreach ($email->getEmailFolders() as $emailFolder) {
+            $folderNames[] = $emailFolder->getFolder()?->getName();
+        }
+        self::assertSame(['Papierkorb'], $folderNames);
+        self::assertSame([], $this->backend->GetMessageList($this->inboxServerId(), 0));
+
+        // Emptying the Papierkorb itself removes the mails permanently.
+        $wasteBasketId = $this->backend->GetWasteBasket();
+        self::assertIsString($wasteBasketId);
+        self::assertTrue($this->backend->EmptyFolder($wasteBasketId));
+
+        self::em()->clear();
+        self::assertNull(self::em()->find(Email::class, $this->fixture['email']->getId()));
     }
 
     public function testReadOnlyModeBlocksMutationsAndHoldsOutgoingMail(): void

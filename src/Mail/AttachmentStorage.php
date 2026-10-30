@@ -51,7 +51,7 @@ final readonly class AttachmentStorage
         $absolutePath = $this->resolveAbsolutePath($relativePath);
         $directory = dirname($absolutePath);
 
-        if (!is_dir($directory) && !@mkdir($directory, 0777, true) && !is_dir($directory)) {
+        if (!is_dir($directory) && !@mkdir($directory, 0770, true) && !is_dir($directory)) {
             throw new \RuntimeException(sprintf('Attachment-Verzeichnis "%s" konnte nicht erstellt werden.', $directory));
         }
 

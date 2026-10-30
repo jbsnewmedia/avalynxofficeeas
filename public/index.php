@@ -17,6 +17,9 @@ use AvalynxOfficeEas\Service\EndpointService;
 use AvalynxOfficeEas\Service\ServiceHolder;
 
 // Load a local .env when present (Docker/compose injects real env vars).
+// Values are mirrored into $_ENV, $_SERVER and putenv() so that code reading
+// $_SERVER (Z-Push config, EndpointService) sees the same values as
+// Database::env(); existing environment variables are never overwritten.
 $envFile = dirname(__DIR__).'/.env';
 
 if (is_readable($envFile)) {
@@ -31,9 +34,17 @@ if (is_readable($envFile)) {
         $name = trim($name);
         $value = trim($value, " \t\"'");
 
-        if ($name && !array_key_exists($name, $_ENV) && false === getenv($name)) {
+        if ('' === $name) {
+            continue;
+        }
+
+        if (!array_key_exists($name, $_ENV) && !array_key_exists($name, $_SERVER) && false === getenv($name)) {
             $_ENV[$name] = $value;
             putenv("$name=$value");
+        }
+
+        if (!array_key_exists($name, $_SERVER)) {
+            $_SERVER[$name] = $_ENV[$name] ?? (false !== getenv($name) ? getenv($name) : $value);
         }
     }
 }
@@ -58,11 +69,22 @@ if (!isset($_SERVER['PHP_AUTH_USER']) && isset($_SERVER['HTTP_AUTHORIZATION'])) 
 // Z-Push state/log directories must exist before the first request.
 foreach ([Database::env('EAS_STATE_DIR', 'var/eas-state') ?? 'var/eas-state', Database::env('EAS_LOG_DIR', 'var/log/eas') ?? 'var/log/eas'] as $directory) {
     if (!is_dir($projectDir.'/'.$directory)) {
-        @mkdir($projectDir.'/'.$directory, 0777, true);
+        @mkdir($projectDir.'/'.$directory, 0770, true);
     }
 }
 
-ServiceHolder::bootstrap($projectDir);
+try {
+    ServiceHolder::bootstrap($projectDir);
+} catch (\Throwable $throwable) {
+    error_log(sprintf('avalynxofficeeas bootstrap failed: %s (%s:%d)', $throwable->getMessage(), $throwable->getFile(), $throwable->getLine()));
+
+    http_response_code(503);
+    header('Content-Type: text/plain; charset=utf-8');
+    header('Retry-After: 60');
+    echo 'Service Unavailable';
+
+    exit;
+}
 
 $endpoint = new EndpointService($projectDir);
 $response = $endpoint->handle();
