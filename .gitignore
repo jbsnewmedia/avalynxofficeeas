@@ -8,3 +8,6 @@ composer.phar
 .idea/
 .php-cs-fixer.cache
 .phpunit.result.cache
+
+# Runtime artifacts (attachment storage of test runs)
+data/

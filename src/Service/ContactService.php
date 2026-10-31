@@ -154,14 +154,7 @@ final readonly class ContactService
                 return true;
             }
         }
-
-        foreach ($this->entityManager->getRepository(EmailAddressLink::class)->findBy(['address' => $address]) as $link) {
-            if ($link instanceof EmailAddressLink && $link->getEmail()?->getAccount() !== $account) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($this->entityManager->getRepository(EmailAddressLink::class)->findBy(['address' => $address]), fn($link) => $link instanceof EmailAddressLink && $link->getEmail()?->getAccount() !== $account);
     }
 
     private function linkAddress(Account $account, Address $address): void
@@ -174,7 +167,7 @@ final readonly class ContactService
 
     private function copyContact(Address $address): Address
     {
-        return (new Address())
+        return new Address()
             ->setEmail($address->getEmail())
             ->setName($address->getName())
             ->setIsContact($address->isContact())
