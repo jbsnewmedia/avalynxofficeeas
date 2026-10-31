@@ -16,17 +16,34 @@ declare(strict_types=1);
  */
 
 use AvalynxOfficeEas\Db\Database;
+use AvalynxOfficeEas\Log\RedactingFileLog;
+use AvalynxOfficeEas\Service\AuthThrottle;
 
 define('TIMEZONE', 'Europe/Berlin');
 define('BASE_PATH', dirname(__DIR__).'/vendor/z-push/z-push-dev/src/');
 define('SCRIPT_TIMEOUT', 0);
-define('USE_CUSTOM_REMOTE_IP_HEADER', 'HTTP_X_REAL_IP');
+/*
+ * Z-Push resolves the client address for its auth-failure log from this
+ * header. The nginx edge overwrites it with the real client address; when
+ * the endpoint is reached directly the header would be attacker controlled,
+ * so it is only activated for requests from a trusted proxy
+ * (EAS_TRUSTED_PROXIES, e.g. the stack's nginx).
+ */
+$remoteAddrForProxyTrust = $_SERVER['REMOTE_ADDR'] ?? '';
+if (\is_string($remoteAddrForProxyTrust) && AuthThrottle::isTrustedProxyAddress($remoteAddrForProxyTrust)) {
+    define('USE_CUSTOM_REMOTE_IP_HEADER', 'HTTP_X_REAL_IP');
+}
 define('CERTIFICATE_OWNER_PARAMETER', 'SSL_CLIENT_S_DN_CN');
 define('USE_FULLEMAIL_FOR_LOGIN', true);
 define('STATE_MACHINE', 'FILE');
 define('STATE_DIR', rtrim(Database::env('EAS_STATE_DIR', 'var/eas-state') ?? 'var/eas-state', '/').'/');
 define('IPC_PROVIDER', '');
-define('LOGBACKEND', 'filelog');
+/*
+ * Redacting log backend: keeps Z-Push's file logging but strips the base64
+ * WBXML request dumps (message contents!) from every log file, including the
+ * error log that receives FATAL messages regardless of the log level.
+ */
+define('LOGBACKEND', RedactingFileLog::class);
 define('LOGLEVEL', (int) (Database::env('EAS_LOGLEVEL', (string) LOGLEVEL_INFO) ?? LOGLEVEL_INFO));
 define('LOGAUTHFAIL', true);
 define('LOGUSERLEVEL', LOGLEVEL_DEVICEID);
@@ -62,7 +79,7 @@ define('PING_HIGHER_BOUND_LIFETIME', 480);
 define('SYNC_TIMEOUT_MEDIUM_DEVICETYPES', 'SAMSUNGGTI');
 define('SYNC_TIMEOUT_LONG_DEVICETYPES', 'iPod, iPad, iPhone, WP, WindowsOutlook, WindowsMail');
 define('RETRY_AFTER_DELAY', 300);
-define('BACKEND_PROVIDER', 'AvalynxOfficeEas\Backend\AvalynxBackend');
+define('BACKEND_PROVIDER', \AvalynxOfficeEas\Backend\AvalynxBackend::class);
 define('SEARCH_PROVIDER', '');
 define('SEARCH_WAIT', 10);
 define('SEARCH_MAXRESULTS', 10);

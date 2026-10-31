@@ -31,8 +31,10 @@ use Doctrine\ORM\EntityManagerInterface;
  *
  * The plugin never transmits via SMTP itself: the core worker
  * (app:mail:send) owns delivery and enforces the licensing policy again
- * before the actual submission. In read-only mode the message is stored
- * with a license hold instead of being queued.
+ * before the actual submission. In read-only mode the submission is rejected
+ * before anything is parsed or persisted - consistent with every other
+ * device-initiated write, nothing of the message reaches the shared database
+ * or the attachment volume.
  */
 final readonly class SendMailService
 {
@@ -59,6 +61,16 @@ final readonly class SendMailService
 
     public function send(\SyncSendMail $sendMail, Account $account): bool
     {
+        // Read-only mode blocks every device-initiated write. The check runs
+        // before the message is parsed or persisted: no bodies, attachments
+        // or folder links may be written while the core reports READ_ONLY
+        // (the device keeps the mail in its outbox and may retry).
+        if ($this->licenseState->isReadOnly()) {
+            $this->log('Submission rejected: the installation is in read-only mode');
+
+            return false;
+        }
+
         $mime = is_string($sendMail->mime) ? $sendMail->mime : '';
 
         if ('' === $mime) {
@@ -76,9 +88,8 @@ final readonly class SendMailService
         // new system folders mid-conversion must not see unpersisted links.
         $this->entityManager->persist($email);
 
-        // The message is stored locally first (data safety). The licensing
-        // policy decides whether it is handed to the core queue (normal) or
-        // paused with an explicit license hold (read-only mode).
+        // The message is stored locally first (data safety); the licensing
+        // policy was checked above, so it is handed to the core queue.
         try {
             $this->entityManager->flush();
         } catch (\Doctrine\DBAL\Exception\UniqueConstraintViolationException) {
@@ -91,13 +102,6 @@ final readonly class SendMailService
             $this->entityManager->flush();
         } catch (\Doctrine\DBAL\Exception\UniqueConstraintViolationException) {
             // the client re-sent a message that is already stored
-            return false;
-        }
-
-        if ($this->licenseState->isReadOnly()) {
-            $email->setLicenseHold(true);
-            $this->entityManager->flush();
-
             return false;
         }
 

@@ -122,6 +122,13 @@ final class EndpointService
 
         try {
             \Request::Initialize();
+
+            // Replace the plain FileStateMachine that ZPush::GetStateMachine()
+            // would construct with the hardened, HMAC-verified implementation
+            // (the property is private static; EndpointService already resets
+            // Z-Push's static caches via reflection on every request).
+            new \ReflectionProperty(\ZPush::class, 'stateMachine')->setValue(null, new \AvalynxOfficeEas\State\HardenedFileStateMachine());
+
             $this->bridgeBody();
             \ZLog::Initialize();
 
@@ -412,17 +419,18 @@ final class EndpointService
         // A freshly touched-but-empty 'users' state file makes Z-Push's
         // FileStateMachine->GetStateVersion()/LinkUserDevice() fatal
         // (SafeGetContents retries on empty content). Seed the settings file
-        // and the user/device list so both are readable.
+        // and the user/device list so both are readable. Both files are
+        // signed like every other state of HardenedFileStateMachine.
         $settingsFile = $stateDir.'/settings';
 
         if (!file_exists($settingsFile)) {
-            @file_put_contents($settingsFile, serialize(['version' => '2']));
+            @file_put_contents($settingsFile, \AvalynxOfficeEas\State\HardenedFileStateMachine::sign(serialize(['version' => '2'])));
         }
 
         $usersFile = $stateDir.'/users';
 
         if (!file_exists($usersFile)) {
-            @file_put_contents($usersFile, serialize([]));
+            @file_put_contents($usersFile, \AvalynxOfficeEas\State\HardenedFileStateMachine::sign(serialize([])));
         }
     }
 

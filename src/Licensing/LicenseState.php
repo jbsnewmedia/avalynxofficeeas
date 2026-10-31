@@ -16,9 +16,9 @@ use Doctrine\DBAL\Connection;
  *
  * The core owns the license_state table and all licensing decisions; the
  * plugin only reads the effective status to mirror the read-only policy for
- * device-initiated writes. Outgoing messages handed over by devices are
- * queued with a license hold when the core is in read-only mode; the core
- * enforces the same policy again before the actual SMTP submission.
+ * device-initiated writes (including outgoing SendMail submissions, which
+ * are rejected before anything is persisted). The core enforces the same
+ * policy again before the actual SMTP submission.
  */
 final readonly class LicenseState
 {

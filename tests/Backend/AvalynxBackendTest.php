@@ -678,7 +678,7 @@ final class AvalynxBackendTest extends TestCase
         self::assertNull(self::em()->find(Email::class, $this->fixture['email']->getId()));
     }
 
-    public function testReadOnlyModeBlocksMutationsAndHoldsOutgoingMail(): void
+    public function testReadOnlyModeBlocksMutationsAndOutgoingMail(): void
     {
         self::em()->getRepository(LicenseState::class)->findAll();
         $this->setLicenseStatus('READ_ONLY');
@@ -704,18 +704,16 @@ final class AvalynxBackendTest extends TestCase
         self::assertFalse($email->isRead());
         self::assertFalse($email->isFavorite());
 
-        // Sending is stored with a license hold instead of being queued. A
-        // new request re-authenticates after the clear.
+        // Sending is blocked like every other device write: nothing is
+        // persisted, no license hold row is created. A new request
+        // re-authenticates after the clear.
         self::assertTrue($this->backend->Logon('admin@example.com', '', 'admin'));
         $sendMail = new \SyncSendMail();
         $sendMail->clientid = 'held-client-1';
         $sendMail->mime = "From: info@example.com\r\nTo: r@example.com\r\nSubject: Held\r\nContent-Type: text/plain\r\n\r\nHeld body";
         self::assertFalse($this->backend->SendMail($sendMail));
 
-        $held = self::em()->getRepository(Email::class)->findOneBy(['importKey' => 'eas|held-client-1']);
-        self::assertNotNull($held);
-        self::assertTrue($held->isLicenseHold());
-        self::assertFalse($held->isSent());
+        self::assertNull(self::em()->getRepository(Email::class)->findOneBy(['importKey' => 'eas|held-client-1']));
     }
 
     public function testDeleteMessageAndEmptyFolder(): void

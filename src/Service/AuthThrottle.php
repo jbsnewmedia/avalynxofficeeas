@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace AvalynxOfficeEas\Service;
 
+use AvalynxOfficeEas\Db\Database;
 use Symfony\Component\Cache\Adapter\AdapterInterface;
 
 /**
@@ -52,19 +53,74 @@ final readonly class AuthThrottle
     }
 
     /**
-     * Resolves the client IP from the edge proxy's overwritten X-Real-IP
-     * header; client-controlled X-Forwarded-For is deliberately ignored.
+     * Resolves the client IP for the brute-force buckets.
+     *
+     * The X-Real-IP header is only honoured when the immediate peer
+     * (REMOTE_ADDR) is a configured trusted proxy (EAS_TRUSTED_PROXIES,
+     * comma separated IPs/CIDR networks - the stack's nginx edge). When the
+     * endpoint is reached directly, or the peer is not trusted, the header is
+     * attacker controlled and REMOTE_ADDR is used instead. The nginx edge
+     * overwrites the header with the real client address, so per-client
+     * throttling keeps working behind the proxy.
      */
     public static function clientIp(): string
     {
-        $realIp = $_SERVER['HTTP_X_REAL_IP'] ?? '';
-        if (is_string($realIp) && false !== filter_var($realIp, FILTER_VALIDATE_IP)) {
-            return $realIp;
+        $remote = $_SERVER['REMOTE_ADDR'] ?? '';
+        $remote = is_string($remote) && false !== filter_var($remote, FILTER_VALIDATE_IP) ? $remote : '';
+
+        if ('' !== $remote && self::isTrustedProxyAddress($remote)) {
+            $realIp = $_SERVER['HTTP_X_REAL_IP'] ?? '';
+            if (is_string($realIp) && false !== filter_var($realIp, FILTER_VALIDATE_IP)) {
+                return $realIp;
+            }
         }
 
-        $remote = $_SERVER['REMOTE_ADDR'] ?? '';
+        return '' !== $remote ? $remote : 'unknown';
+    }
 
-        return is_string($remote) && false !== filter_var($remote, FILTER_VALIDATE_IP) ? $remote : 'unknown';
+    /**
+     * Whether the given address belongs to the configured trusted proxies.
+     *
+     * Entries may be single IPs (v4/v6) or IPv4 CIDR networks. An empty
+     * configuration trusts nobody - callers then never read a client
+     * controlled X-Real-IP header.
+     */
+    public static function isTrustedProxyAddress(string $ip): bool
+    {
+        if (false === filter_var($ip, FILTER_VALIDATE_IP)) {
+            return false;
+        }
+
+        $configured = Database::env('EAS_TRUSTED_PROXIES', '') ?? '';
+
+        foreach (array_filter(array_map(trim(...), explode(',', (string) $configured))) as $entry) {
+            if ($entry === $ip) {
+                return true;
+            }
+
+            if (str_contains($entry, '/') && str_contains($ip, '.') && self::ipv4InCidr($ip, $entry)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function ipv4InCidr(string $ip, string $cidr): bool
+    {
+        [$network, $prefix] = array_pad(explode('/', $cidr, 2), 2, '32');
+        $prefix = (int) $prefix;
+
+        if (false === filter_var($network, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)
+            || $prefix < 0 || $prefix > 32
+            || false === filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)
+        ) {
+            return false;
+        }
+
+        $mask = 0 === $prefix ? 0 : (-1 << (32 - $prefix)) & 0xFFFFFFFF;
+
+        return (ip2long($ip) & $mask) === (ip2long($network) & $mask);
     }
 
     private function key(string $scope, string $identifier): string

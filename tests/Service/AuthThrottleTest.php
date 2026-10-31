@@ -31,6 +31,10 @@ final class AuthThrottleTest extends TestCase
 
     private mixed $remoteBackup = null;
 
+    private bool $hadTrustedProxies = false;
+
+    private mixed $trustedProxiesBackup = null;
+
     protected function setUp(): void
     {
         $this->tmpDir = sys_get_temp_dir().'/avalynxofficeeas-auth-throttle-'.uniqid('', true);
@@ -41,6 +45,8 @@ final class AuthThrottleTest extends TestCase
         $this->realIpBackup = $_SERVER['HTTP_X_REAL_IP'] ?? null;
         $this->hadRemote = array_key_exists('REMOTE_ADDR', $_SERVER);
         $this->remoteBackup = $_SERVER['REMOTE_ADDR'] ?? null;
+        $this->hadTrustedProxies = array_key_exists('EAS_TRUSTED_PROXIES', $_SERVER);
+        $this->trustedProxiesBackup = $_SERVER['EAS_TRUSTED_PROXIES'] ?? null;
     }
 
     protected function tearDown(): void
@@ -61,6 +67,12 @@ final class AuthThrottleTest extends TestCase
             $_SERVER['REMOTE_ADDR'] = $this->remoteBackup;
         } else {
             unset($_SERVER['REMOTE_ADDR']);
+        }
+
+        if ($this->hadTrustedProxies) {
+            $_SERVER['EAS_TRUSTED_PROXIES'] = $this->trustedProxiesBackup;
+        } else {
+            unset($_SERVER['EAS_TRUSTED_PROXIES']);
         }
 
         foreach ((array) glob($this->tmpDir.'/*') ?: [] as $file) {
@@ -125,17 +137,56 @@ final class AuthThrottleTest extends TestCase
         self::assertFalse($this->throttle->isBlocked('203.0.113.9', 'user@example.com'));
     }
 
-    public function testClientIpUsesEdgeRealIpAndIgnoresForwardedFor(): void
+    public function testClientIpIgnoresRealIpHeaderFromUntrustedPeers(): void
     {
+        // No trusted proxies configured: the header is never honoured.
         $_SERVER['HTTP_X_REAL_IP'] = '198.51.100.1';
         $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.1, 10.0.0.1';
         $_SERVER['REMOTE_ADDR'] = '10.0.0.2';
-        self::assertSame('198.51.100.1', AuthThrottle::clientIp());
+        self::assertSame('10.0.0.2', AuthThrottle::clientIp());
 
         $_SERVER['HTTP_X_REAL_IP'] = 'not-an-ip';
         self::assertSame('10.0.0.2', AuthThrottle::clientIp());
 
         $_SERVER['REMOTE_ADDR'] = 'invalid';
         self::assertSame('unknown', AuthThrottle::clientIp());
+    }
+
+    public function testClientIpUsesRealIpHeaderOnlyFromTrustedProxies(): void
+    {
+        $_SERVER['EAS_TRUSTED_PROXIES'] = '172.30.0.2, 10.0.0.0/8';
+
+        // Peer is the trusted edge proxy: its overwritten X-Real-IP wins.
+        $_SERVER['REMOTE_ADDR'] = '10.0.0.2';
+        $_SERVER['HTTP_X_REAL_IP'] = '198.51.100.1';
+        self::assertSame('198.51.100.1', AuthThrottle::clientIp());
+
+        // Peer inside the trusted CIDR network.
+        $_SERVER['REMOTE_ADDR'] = '10.42.7.7';
+        self::assertSame('198.51.100.1', AuthThrottle::clientIp());
+
+        // Invalid header value from a trusted peer falls back to the peer.
+        $_SERVER['HTTP_X_REAL_IP'] = 'not-an-ip';
+        self::assertSame('10.42.7.7', AuthThrottle::clientIp());
+
+        // Outside the trusted networks the header is ignored again.
+        $_SERVER['REMOTE_ADDR'] = '192.0.2.5';
+        $_SERVER['HTTP_X_REAL_IP'] = '198.51.100.1';
+        self::assertSame('192.0.2.5', AuthThrottle::clientIp());
+    }
+
+    public function testIsTrustedProxyAddressMatchesIpsAndCidrNetworks(): void
+    {
+        $_SERVER['EAS_TRUSTED_PROXIES'] = '172.30.0.2, 10.0.0.0/8, 2001:db8::1';
+
+        self::assertTrue(AuthThrottle::isTrustedProxyAddress('172.30.0.2'));
+        self::assertTrue(AuthThrottle::isTrustedProxyAddress('10.255.0.1'));
+        self::assertTrue(AuthThrottle::isTrustedProxyAddress('2001:db8::1'));
+        self::assertFalse(AuthThrottle::isTrustedProxyAddress('172.30.0.3'));
+        self::assertFalse(AuthThrottle::isTrustedProxyAddress('192.0.2.10'));
+        self::assertFalse(AuthThrottle::isTrustedProxyAddress('not-an-ip'));
+
+        $_SERVER['EAS_TRUSTED_PROXIES'] = '';
+        self::assertFalse(AuthThrottle::isTrustedProxyAddress('10.0.0.2'));
     }
 }
