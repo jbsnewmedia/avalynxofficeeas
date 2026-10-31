@@ -1,6 +1,6 @@
-# avalynxofficeeas
+# AvalynxOfficeEAS
 
-**AvalynxOfficeEAS — ActiveSync extension for [AvalynxOffice](https://github.com/jbsnewmedia/avalynxoffice)**
+**AvalynxOfficeEAS — ActiveSync extension for [](https://github.com/jbsnewmedia/avalynxoffice)**
 (core repository: `avalynxoffice`) — Exchange ActiveSync (EAS) device
 synchronization based on [Z-Push](https://github.com/Z-Hub/Z-Push).
 
