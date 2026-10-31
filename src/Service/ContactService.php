@@ -154,7 +154,8 @@ final readonly class ContactService
                 return true;
             }
         }
-        return array_any($this->entityManager->getRepository(EmailAddressLink::class)->findBy(['address' => $address]), fn($link) => $link instanceof EmailAddressLink && $link->getEmail()?->getAccount() !== $account);
+
+        return array_any($this->entityManager->getRepository(EmailAddressLink::class)->findBy(['address' => $address]), fn ($link) => $link instanceof EmailAddressLink && $link->getEmail()?->getAccount() !== $account);
     }
 
     private function linkAddress(Account $account, Address $address): void
