@@ -93,3 +93,4 @@ jobs:
                 with:
                     name: avalynxofficeeas-${{ steps.version.outputs.version }}
                     path: dist/*
+                    include-hidden-files: true
