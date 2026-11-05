@@ -1,6 +1,8 @@
 # AvalynxOfficeEAS
 
-**AvalynxOfficeEAS — ActiveSync extension for [](https://github.com/jbsnewmedia/avalynxoffice)**
+[Deutsch](README.de.md)
+
+**AvalynxOfficeEAS — ActiveSync extension for [AvalynxOffice](https://github.com/jbsnewmedia/avalynxoffice)**
 (core repository: `avalynxoffice`) — Exchange ActiveSync (EAS) device
 synchronization based on [Z-Push](https://github.com/Z-Hub/Z-Push).
 
@@ -17,8 +19,9 @@ synchronize mail, contacts and calendars with an AvalynxOffice installation.
 It is an **independent extension, not part of avalynxoffice**:
 
 - runs as its own process/container next to the avalynxoffice core,
-- talks to the same PostgreSQL database through **its own database models**
-  (the database schema is the interface — no core classes are used),
+- talks to the same database (PostgreSQL or MariaDB/MySQL) through **its own
+  database models** (the database schema is the interface — no core classes
+  are used),
 - enforces the avalynxoffice licensing state (`license_state`) for
   device-initiated writes and hands outgoing messages to the core mail queue;
   the core remains responsible for SMTP delivery and licensing decisions,
@@ -61,7 +64,7 @@ integration suite and a live end-to-end FolderSync through the compose stack.
 
 | Variable | Meaning |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection (same database as avalynxoffice) |
+| `DATABASE_URL` | database connection (same database as avalynxoffice; PostgreSQL or MariaDB/MySQL) |
 | `ATTACHMENT_STORAGE_DIR` | attachment storage path, **shared volume** with the core (default `data/attachments`) |
 | `ATTACHMENT_STORAGE_MAX_BYTES` | maximum size of a single attachment sent from a device in bytes (default `26214400` = 25 MB, minimum `1024`); larger attachments abort the submission with `MailSubmissionFailed` instead of being dropped silently |
 | `EAS_STATE_DIR` | Z-Push state directory (default `var/eas-state`) |
@@ -88,7 +91,8 @@ vendor/bin/phpunit
 
 The integration tests use a dedicated database
 (`avalynxofficeeas_test`, derived from `DATABASE_URL`) and require a
-reachable PostgreSQL instance plus a PHP 8.5 runtime with `ext-sodium`.
+reachable PostgreSQL or MariaDB instance plus a PHP 8.5 runtime with
+`ext-sodium`.
 The published dev image `jbsnewmedia/avalynxofficeeas-dev` (built from
 `Dockerfile.dev`, includes the dev dependencies) is the recommended
 runtime — see `AGENTS.md` for the exact `docker run` command.
