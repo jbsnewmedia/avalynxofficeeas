@@ -10,6 +10,7 @@
         "doctrine/orm": "^3.7.2",
         "monolog/monolog": "^3.0",
         "symfony/cache": "^7.3|^8.1",
+        "symfony/polyfill-intl-idn": "^1.43",
         "symfony/uid": "^7.3|^8.1",
         "z-push/z-push-dev": "^2.7.6"
     },

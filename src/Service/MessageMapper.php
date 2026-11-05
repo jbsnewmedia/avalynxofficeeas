@@ -16,8 +16,13 @@ use AvalynxOfficeEas\Db\Model\EmailAddressType;
 /**
  * Builds Z-Push SyncMail objects and message stat entries from Email models.
  */
-final class MessageMapper
+final readonly class MessageMapper
 {
+    public function __construct(
+        private IdnService $idnService,
+    ) {
+    }
+
     /**
      * @return array{id: string, mod: string, flags: int, star: int}
      */
@@ -64,9 +69,12 @@ final class MessageMapper
             $address = $link->getAddress();
 
             if (null !== $address && $link->getType() === $type) {
+                // Stored punycode domains are decoded so the device shows
+                // "user@bästoff.de" instead of "user@xn--bstoff-bua.de".
+                $addressString = $this->idnService->toUnicode($address->getEmail());
                 $addresses[] = null !== $address->getName()
-                    ? sprintf('"%s" <%s>', $address->getName(), $address->getEmail())
-                    : $address->getEmail();
+                    ? sprintf('"%s" <%s>', $address->getName(), $addressString)
+                    : $addressString;
             }
         }
 

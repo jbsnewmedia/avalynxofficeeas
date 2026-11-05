@@ -36,13 +36,19 @@ final readonly class UserResolver
      */
     private const string DUMMY_PASSWORD_HASH = '$2y$13$aBry3ZNLyuzkWjsUI3dEd.XX.4Sxbae/wOuvT.vugjuAaRr23o1LG';
 
-    public function __construct(private EntityManagerInterface $entityManager)
-    {
+    public function __construct(
+        private EntityManagerInterface $entityManager,
+        private IdnService $idnService,
+    ) {
     }
 
     public function resolve(string $username, string $password): ?EasUserContext
     {
-        $email = mb_strtolower(trim($username));
+        // IDN domains are stored in punycode form: a device login typed as
+        // "User@Bästoff.DE" must find the user stored as
+        // "user@xn--bstoff-bua.de" — independently of whether the input
+        // method punycode-normalizes on its own.
+        $email = $this->idnService->toAscii(mb_strtolower(trim($username)));
 
         if ('' === $email) {
             return null;

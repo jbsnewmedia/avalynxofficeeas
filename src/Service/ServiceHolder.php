@@ -59,18 +59,19 @@ final class ServiceHolder
             max(1024, (int) (Database::env('ATTACHMENT_STORAGE_MAX_BYTES', '26214400') ?? 26214400)),
         );
         $licenseState = new LicenseState($entityManager->getConnection());
-        $contactMapper = new ContactMapper();
+        $idnService = new IdnService();
+        $contactMapper = new ContactMapper($idnService);
         $calendarMapper = new CalendarMapper();
         $folderMapping = new FolderMapping();
-        $messageMapper = new MessageMapper();
+        $messageMapper = new MessageMapper($idnService);
         $folderService = new FolderService($entityManager);
         $mailFolderService = new MailFolderService($entityManager);
-        $userResolver = new UserResolver($entityManager);
+        $userResolver = new UserResolver($entityManager, $idnService);
         $mutationService = new MessageMutationService($entityManager, $folderService, $licenseState);
         $contactService = new ContactService($entityManager, $contactMapper, $licenseState);
         $calendarService = new CalendarService($entityManager, $calendarMapper, $licenseState);
         $attachmentService = new AttachmentService($entityManager, $attachmentStorage);
-        $sendMailService = new SendMailService($entityManager, $folderService, $attachmentStorage, $licenseState);
+        $sendMailService = new SendMailService($entityManager, $folderService, $attachmentStorage, $licenseState, $idnService);
         $lastAuthenticationRecorder = new LastAuthenticationRecorder($entityManager);
         $authThrottle = new AuthThrottle(new \Symfony\Component\Cache\Adapter\FilesystemAdapter(
             'avalynxofficeeas-auth',
