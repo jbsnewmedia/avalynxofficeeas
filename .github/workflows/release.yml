@@ -1,0 +1,93 @@
+name: release
+
+on:
+    release:
+        types:
+            - published
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: 'Build the packages and upload them as artifacts instead of attaching them to a release.'
+                type: boolean
+                default: true
+
+permissions:
+    contents: write
+
+jobs:
+    package:
+        runs-on: ubuntu-24.04
+
+        steps:
+            -   uses: actions/checkout@v6
+                with:
+                    ref: ${{ github.event.release.tag_name || github.ref }}
+
+            -   name: Determine version
+                id: version
+                run: |
+                    if [ "${{ github.event_name }}" = "release" ]; then
+                        echo "version=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+                    else
+                        echo "version=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+                    fi
+
+            -   name: Setup PHP
+                uses: shivammathur/setup-php@v2
+                with:
+                    php-version: '8.5'
+                    extensions: sodium, mailparse
+                    coverage: none
+
+            -   name: Install dependencies
+                run: composer install --no-dev --prefer-dist --no-interaction --no-progress
+
+            -   name: Assemble package
+                run: |
+                    VERSION="${{ steps.version.outputs.version }}"
+                    PACKAGE="avalynxofficeeas-$VERSION"
+                    mkdir -p "dist/$PACKAGE"
+                    for item in src config public vendor data composer.json composer.lock; do
+                        cp -rL "$item" "dist/$PACKAGE/"
+                    done
+                    # First-start scaffolding: the front controller creates the
+                    # state/log directories automatically, the placeholders keep
+                    # them inside the archives.
+                    mkdir -p "dist/$PACKAGE/var/eas-state" "dist/$PACKAGE/var/log/eas"
+                    touch "dist/$PACKAGE/var/eas-state/.gitkeep" "dist/$PACKAGE/var/log/eas/.gitkeep"
+                    cat > "dist/$PACKAGE/.env" << 'ENV'
+                    # Database connection - same database as the avalynxoffice core.
+                    DATABASE_URL="mysql://user:password@localhost:3306/database?serverVersion=10.6.23-MariaDB&charset=utf8mb4"
+
+                    # Shared attachment storage (same directory as the core uses).
+                    ATTACHMENT_STORAGE_DIR="data/attachments"
+
+                    # Maximum size of a single attachment sent from a device (bytes).
+                    ATTACHMENT_STORAGE_MAX_BYTES=26214400
+
+                    # Z-Push state and log directories (project-relative).
+                    EAS_STATE_DIR="var/eas-state"
+                    EAS_LOG_DIR="var/log/eas"
+                    EAS_LOGLEVEL=1
+                    ENV
+
+            -   name: Create archives
+                run: |
+                    VERSION="${{ steps.version.outputs.version }}"
+                    cd dist
+                    zip -rq "avalynxofficeeas-$VERSION.zip" "avalynxofficeeas-$VERSION"
+                    tar czf "avalynxofficeeas-$VERSION.tar.gz" "avalynxofficeeas-$VERSION"
+                    sha256sum "avalynxofficeeas-$VERSION.zip" "avalynxofficeeas-$VERSION.tar.gz" > "avalynxofficeeas-$VERSION.sha256"
+
+            -   name: Attach to release
+                if: github.event_name == 'release'
+                env:
+                    GH_TOKEN: ${{ github.token }}
+                run: gh release upload "${{ github.event.release.tag_name }}" "dist/avalynxofficeeas-${{ steps.version.outputs.version }}.zip" "dist/avalynxofficeeas-${{ steps.version.outputs.version }}.tar.gz" "dist/avalynxofficeeas-${{ steps.version.outputs.version }}.sha256" --clobber
+
+            -   name: Upload artifact (dry run)
+                if: github.event_name != 'release'
+                uses: actions/upload-artifact@v4
+                with:
+                    name: avalynxofficeeas-${{ steps.version.outputs.version }}
+                    path: dist/*
