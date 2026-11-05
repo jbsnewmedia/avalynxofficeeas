@@ -53,6 +53,13 @@ docker run --rm --user 1000:1000 --entrypoint /bin/bash --network <db-network> \
 - Do not add code that instantiates `App\` classes — the PSR-4 root is
   `AvalynxOfficeEas\` only.
 
+## Commits — always ask first
+
+Before **every** `git commit` — for any change (code, docs, workflows,
+configuration) — present the intended commit (files and commit message)
+and **ask the user for approval first**. Never commit without an explicit
+OK from the user.
+
 ## Tags and releases — maintainer only
 
 **Agents must never create, push, or delete git tags or GitHub releases —
