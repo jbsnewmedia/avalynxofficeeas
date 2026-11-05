@@ -504,7 +504,15 @@ final class AvalynxBackendTest extends TestCase
         self::assertSame(['info@example.com'], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::SENDER->value] ?? []);
         self::assertSame(['mixed.case@example.org', 'contact@example.com'], $addresses[\AvalynxOfficeEas\Db\Model\EmailAddressType::RECIPIENT->value] ?? []);
         self::assertCount(1, self::em()->getRepository(\AvalynxOfficeEas\Db\Model\Address::class)->findBy(['email' => 'contact@example.com']));
-        self::assertNull(self::em()->getRepository(\AvalynxOfficeEas\Db\Model\Address::class)->findOneBy(['email' => 'Mixed.Case@Example.ORG']));
+        // PostgreSQL compares case-sensitively; MariaDB/MySQL use the table's
+        // case-insensitive default collation - safe either way, because every
+        // stored address is lower-cased.
+        $mixedCaseLookup = self::em()->getRepository(\AvalynxOfficeEas\Db\Model\Address::class)->findOneBy(['email' => 'Mixed.Case@Example.ORG']);
+        if (self::em()->getConnection()->getDatabasePlatform() instanceof \Doctrine\DBAL\Platforms\AbstractMySQLPlatform) {
+            self::assertNotNull($mixedCaseLookup);
+        } else {
+            self::assertNull($mixedCaseLookup);
+        }
 
         $attachments = $email->getEmailAttachments();
         self::assertCount(1, $attachments);
