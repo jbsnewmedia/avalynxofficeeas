@@ -86,10 +86,13 @@ trait TestEnvironment
     {
         // The CREATE DATABASE statement must run outside a transaction and
         // against a maintenance database. Prefer the PostgreSQL default
-        // database, but fall back to the database from the URL: minimal
-        // stacks (POSTGRES_DB set to something else) may not have one.
+        // database; MariaDB/MySQL have no "postgres" database, so their own
+        // "mysql" system database is tried next (it always exists). The
+        // database from the URL is the last resort: minimal stacks
+        // (POSTGRES_DB set to something else) may not have one.
         $candidates = [
             preg_replace('#/[^/?]+(\?|$)#', '/postgres$1', $url),
+            preg_replace('#/[^/?]+(\?|$)#', '/mysql$1', $url),
             $url,
         ];
 
