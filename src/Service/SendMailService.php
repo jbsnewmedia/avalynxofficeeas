@@ -54,6 +54,7 @@ final readonly class SendMailService
         private FolderService $folderService,
         private AttachmentStorage $attachmentStorage,
         private LicenseState $licenseState,
+        private IdnService $idnService,
     ) {
         $this->mimeParser = new MimeParser();
         $this->addressRepository = $this->entityManager->getRepository(Address::class);
@@ -123,7 +124,7 @@ final readonly class SendMailService
         $email->setReceivedAt(new \DateTimeImmutable());
         $email->setMessageId(self::sanitize((string) $message->getHeader('message-id'), self::MESSAGE_ID_MAX_LENGTH));
 
-        if (!$this->linkHeaderAddresses($email, $message, 'from', EmailAddressType::SENDER, strtolower(trim($account->getEmail())))) {
+        if (!$this->linkHeaderAddresses($email, $message, 'from', EmailAddressType::SENDER, $this->normalizeAddress($account->getEmail()))) {
             $this->linkAddress($email, $account->getEmail(), EmailAddressType::SENDER);
         }
         $this->linkHeaderAddresses($email, $message, 'to', EmailAddressType::RECIPIENT);
@@ -141,7 +142,7 @@ final readonly class SendMailService
         $linked = false;
 
         foreach ($message->getAddresses($headerName) as $address) {
-            $emailAddress = self::normalizeAddress($address['email']);
+            $emailAddress = $this->normalizeAddress($address['email']);
             if (null !== $requiredAddress && $emailAddress !== $requiredAddress) {
                 continue;
             }
@@ -159,15 +160,17 @@ final readonly class SendMailService
      * accounts, so a client-chosen name would be shown to every other user
      * of the installation (display-name poisoning).
      *
-     * Addresses are normalized to lower case and must pass FILTER_VALIDATE_EMAIL;
-     * anything else aborts the submission (the device reports
-     * MailSubmissionFailed) instead of persisting garbage in the shared table.
+     * Addresses are normalized to lower case and converted to punycode (IDN
+     * domains typed in Unicode form on the device) and must pass
+     * FILTER_VALIDATE_EMAIL; anything else aborts the submission (the device
+     * reports MailSubmissionFailed) instead of persisting garbage in the
+     * shared table.
      *
      * @throws \RuntimeException when the address is not a valid e-mail address
      */
     private function linkAddress(Email $email, string $emailAddr, EmailAddressType $type): void
     {
-        $emailAddr = self::normalizeAddress($emailAddr);
+        $emailAddr = $this->normalizeAddress($emailAddr);
 
         if ('' === $emailAddr) {
             return;
@@ -196,9 +199,9 @@ final readonly class SendMailService
         $this->entityManager->persist($link);
     }
 
-    private static function normalizeAddress(string $emailAddr): string
+    private function normalizeAddress(string $emailAddr): string
     {
-        return strtolower(trim(self::sanitize($emailAddr, PHP_INT_MAX), "<> \t\n\r"));
+        return $this->idnService->toAscii(strtolower(trim(self::sanitize($emailAddr, PHP_INT_MAX), "<> \t\n\r")));
     }
 
     /**

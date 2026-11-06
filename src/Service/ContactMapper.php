@@ -14,13 +14,18 @@ use AvalynxOfficeEas\Db\Model\Address;
 /**
  * Maps Address models to EAS SyncContact objects and back.
  */
-final class ContactMapper
+final readonly class ContactMapper
 {
     /**
      * Internal placeholder for device-created contacts without an email
      * address; it is never exported back to clients.
      */
     public const string FALLBACK_EMAIL = 'unknown@localhost';
+
+    public function __construct(
+        private IdnService $idnService,
+    ) {
+    }
 
     /**
      * @return array{id: string, mod: string, flags: int, star: int}
@@ -41,7 +46,8 @@ final class ContactMapper
         $contact->fileas = $address->displayName();
 
         if (self::FALLBACK_EMAIL !== $address->getEmail()) {
-            $contact->email1address = $address->getEmail();
+            // Stored punycode domains are decoded for the device display.
+            $contact->email1address = $this->idnService->toUnicode($address->getEmail());
         }
         $contact->firstname = $address->getFirstname();
         $contact->lastname = $address->getLastname();
@@ -70,7 +76,8 @@ final class ContactMapper
         $email = $this->extractEmail($contact->email1address ?? null);
 
         if (null !== $email) {
-            $address->setEmail($email);
+            // Device input is stored in the core's canonical punycode form.
+            $address->setEmail($this->idnService->toAscii($email));
         }
 
         if (false !== ($value = $this->stringOrNull($contact->businessphonenumber ?? null))) {
