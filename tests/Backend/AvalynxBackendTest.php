@@ -662,6 +662,99 @@ final class AvalynxBackendTest extends TestCase
         self::assertSame('renamed@example.com', $address->getEmail());
     }
 
+    public function testGetMessageWithUnknownContactIdReturnsFalse(): void
+    {
+        self::assertFalse($this->backend->GetMessage($this->contactServerId(), '00000000-0000-7000-8000-000000000000', $this->contentParameters()));
+    }
+
+    public function testDeleteMessageRemovesUnsharedContact(): void
+    {
+        $contactId = $this->fixture['contact']->getId();
+        \assert(null !== $contactId);
+
+        self::assertTrue($this->backend->DeleteMessage($this->contactServerId(), $contactId->toRfc4122(), $this->contentParameters()));
+        self::assertSame([], $this->backend->GetMessageList($this->contactServerId(), 0));
+
+        self::em()->clear();
+        self::assertNull(self::em()->find(\AvalynxOfficeEas\Db\Model\Address::class, $contactId));
+    }
+
+    public function testDeleteMessageKeepsAddressReferencedByMail(): void
+    {
+        $contact = self::em()->find(\AvalynxOfficeEas\Db\Model\Address::class, $this->fixture['contact']->getId());
+        self::assertNotNull($contact);
+
+        // The address row is also the sender of a mail of this account.
+        $mail = new Email();
+        $mail->setSubject('Referencing mail');
+        $mail->setReceivedAt(new \DateTimeImmutable('-30 minutes'));
+        $mail->setAccount($this->fixture['account']);
+        $link = new \AvalynxOfficeEas\Db\Model\EmailAddressLink();
+        $link->setEmail($mail);
+        $link->setAddress($contact);
+        $link->setType(\AvalynxOfficeEas\Db\Model\EmailAddressType::SENDER);
+        $mail->addEmailAddress($link);
+        self::em()->persist($mail);
+        self::em()->persist($link);
+        self::em()->flush();
+        self::em()->clear();
+
+        $contactId = $this->fixture['contact']->getId();
+        \assert(null !== $contactId);
+        self::assertTrue($this->backend->Logon('admin@example.com', '', 'admin'));
+        self::assertTrue($this->backend->DeleteMessage($this->contactServerId(), $contactId->toRfc4122(), $this->contentParameters()));
+        self::assertSame([], $this->backend->GetMessageList($this->contactServerId(), 0));
+
+        // The contact link is gone but the address row survives with the mail reference.
+        self::em()->clear();
+        $address = self::em()->find(\AvalynxOfficeEas\Db\Model\Address::class, $contactId);
+        self::assertNotNull($address);
+        self::assertNull(self::em()->getRepository(\AvalynxOfficeEas\Db\Model\AccountAddress::class)->findOneBy(['address' => $address]));
+    }
+
+    public function testContactSharedWithSecondAccountIsCopiedOnUpdateAndKeptOnDelete(): void
+    {
+        $second = new \AvalynxOfficeEas\Db\Model\Account();
+        $second->setName('Second');
+        $second->setEmail('second@example.com');
+        self::em()->persist($second);
+
+        $contactId = $this->fixture['contact']->getId();
+        \assert(null !== $contactId);
+        $contact = self::em()->find(\AvalynxOfficeEas\Db\Model\Address::class, $contactId);
+        self::assertNotNull($contact);
+        self::em()->persist(new \AvalynxOfficeEas\Db\Model\AccountAddress()->setAccount($second)->setAddress($contact));
+        self::em()->flush();
+        self::em()->clear();
+
+        self::assertTrue($this->backend->Logon('admin@example.com', '', 'admin'));
+
+        // The update goes copy-on-write: this account receives its own row.
+        $update = new \SyncContact();
+        $update->fileas = 'Renamed';
+        $update->email1address = 'renamed@example.com';
+        $result = $this->backend->ChangeMessage($this->contactServerId(), $contactId->toRfc4122(), $update, $this->contentParameters());
+        self::assertIsArray($result);
+        self::assertNotSame($contactId->toRfc4122(), $result['id']);
+
+        self::em()->clear();
+        $copy = self::em()->find(\AvalynxOfficeEas\Db\Model\Address::class, $result['id']);
+        self::assertNotNull($copy);
+
+        // A new request re-authenticates after the clear.
+        self::assertTrue($this->backend->Logon('admin@example.com', '', 'admin'));
+
+        // Deleting the copy keeps the shared original (still linked to the second account).
+        self::assertTrue($this->backend->DeleteMessage($this->contactServerId(), $result['id'], $this->contentParameters()));
+
+        self::em()->clear();
+        self::assertNull(self::em()->find(\AvalynxOfficeEas\Db\Model\Address::class, $result['id']));
+        $original = self::em()->find(\AvalynxOfficeEas\Db\Model\Address::class, $contactId);
+        self::assertNotNull($original);
+        self::assertSame('contact@example.com', $original->getEmail());
+        self::assertCount(1, self::em()->getRepository(\AvalynxOfficeEas\Db\Model\AccountAddress::class)->findBy(['address' => $original]));
+    }
+
     public function testEmptyFolderMovesMailsToWasteBasketAndEmptyingWasteBasketDeletesPermanently(): void
     {
         self::assertTrue($this->backend->EmptyFolder($this->inboxServerId()));

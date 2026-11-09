@@ -230,6 +230,32 @@ final class ContactMapperTest extends TestCase
         self::assertNull($address->getBirthday());
     }
 
+    public function testApplyTreatsNonScalarDatesAsCleared(): void
+    {
+        $contact = new \SyncContact();
+        $contact->birthday = true;
+        $contact->anniversary = ['not-a-date'];
+
+        $address = self::filledAddress();
+        new ContactMapper(new IdnService())->applySyncContact($address, $contact);
+
+        self::assertNull($address->getBirthday());
+        self::assertNull($address->getAnniversary());
+    }
+
+    public function testApplyIgnoresNonArrayLists(): void
+    {
+        $contact = new \SyncContact();
+        $contact->children = 'Max';
+        $contact->categories = 7;
+
+        $address = self::filledAddress();
+        new ContactMapper(new IdnService())->applySyncContact($address, $contact);
+
+        self::assertSame(['Max', 'Moritz'], $address->getChildren());
+        self::assertSame(['Friends', 'Work'], $address->getCategories());
+    }
+
     #[DataProvider('emailNormalizationProvider')]
     public function testApplyNormalizesEmails(string $input, string $expected): void
     {

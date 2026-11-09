@@ -190,17 +190,27 @@ final readonly class MessageMapper
         }
     }
 
-    private function truncation(object $contentparameters): int|false
+    private function truncation(\ContentParameters $contentparameters): int|false
     {
-        $callback = [$contentparameters, 'GetTruncation'];
-
-        if (!\is_callable($callback)) {
-            return false;
-        }
-
-        $value = \call_user_func($callback);
+        // GetTruncation resolves to the dynamic StateObject property
+        // "truncation" (Z-Push __call magic, not a real method); it is
+        // null when the device did not send a truncation preference.
+        $value = $this->stateProperty($contentparameters, 'truncation');
 
         return is_int($value) ? $value : false;
+    }
+
+    /**
+     * Reads a dynamic Z-Push StateObject property (the Get and Set
+     * __call magic resolves to plain object properties); the indirection
+     * through a method parameter keeps static analysis from flagging the
+     * magic property access — same approach as the SyncProps test accessor.
+     */
+    private function stateProperty(object $target, string $property): mixed
+    {
+        $reader = (fn () => $this->{$property} ?? null);
+
+        return $reader->call($target);
     }
 
     private function assignAttachments(Email $email, \SyncMail $output): void

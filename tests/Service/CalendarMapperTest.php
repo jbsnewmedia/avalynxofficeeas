@@ -108,6 +108,196 @@ final class CalendarMapperTest extends TestCase
         self::assertSame('Moved note', (string) stream_get_contents($moved->asbody->data));
     }
 
+    public function testStatAnnouncesEvent(): void
+    {
+        $event = new CalendarEvent();
+        $event->setTitle('Series');
+        $event->setStartAt(new \DateTimeImmutable('2026-11-10 09:00'));
+        $event->touch();
+
+        $stat = new CalendarMapper()->stat($event);
+        $updatedAt = $event->getUpdatedAt();
+        self::assertNotNull($updatedAt);
+
+        self::assertSame($event->getId()?->toRfc4122(), $stat['id']);
+        self::assertSame((string) $updatedAt->getTimestamp(), $stat['mod']);
+        self::assertSame(0, $stat['flags']);
+        self::assertSame(0, $stat['star']);
+    }
+
+    public function testBuildMapsDtstampAndFullRecurrencePattern(): void
+    {
+        $appointment = new CalendarMapper()->buildSyncAppointment(self::filledEvent());
+
+        self::assertSame(new \DateTimeImmutable('2026-11-09 10:00')->getTimestamp(), $appointment->dtstamp);
+
+        $recurrence = $appointment->recurrence;
+        self::assertInstanceOf(\SyncRecurrence::class, $recurrence);
+        self::assertSame(15, $recurrence->dayofmonth);
+        self::assertSame(2, $recurrence->weekofmonth);
+        self::assertSame(11, $recurrence->monthofyear);
+    }
+
+    public function testBuildOmitsEmptyLists(): void
+    {
+        $event = new CalendarEvent();
+        $event->setTitle('Plain');
+        $event->setStartAt(new \DateTimeImmutable('2026-11-10 09:00'));
+
+        $appointment = new CalendarMapper()->buildSyncAppointment($event);
+
+        self::assertNull($appointment->attendees);
+        self::assertNull($appointment->exceptions);
+        self::assertNull($appointment->categories);
+        self::assertNull($appointment->recurrence);
+    }
+
+    public function testBuildSupportsExceptionWithoutDescription(): void
+    {
+        $event = new CalendarEvent();
+        $event->setTitle('Series');
+        $event->setStartAt(new \DateTimeImmutable('2026-11-10 09:00'));
+        $event->setRecurrenceType(1);
+
+        $exception = new CalendarEventException();
+        $exception->setExceptionStartAt(new \DateTimeImmutable('2026-11-17 09:00'));
+        $exception->setTitle('Short');
+        $exception->setStartAt(new \DateTimeImmutable('2026-11-17 11:00'));
+        $exception->setEndAt(new \DateTimeImmutable('2026-11-17 12:00'));
+        $event->addException($exception);
+
+        $appointment = new CalendarMapper()->buildSyncAppointment($event);
+
+        $exceptions = $appointment->exceptions;
+        self::assertIsArray($exceptions);
+        self::assertCount(1, $exceptions);
+        self::assertInstanceOf(\SyncAppointmentException::class, $exceptions[0]);
+        self::assertNull($exceptions[0]->asbody);
+    }
+
+    public function testApplyRoundTripsDtstampAndFullRecurrencePattern(): void
+    {
+        $mapper = new CalendarMapper();
+        $syncAppointment = $mapper->buildSyncAppointment(self::filledEvent());
+        $applied = new CalendarEvent();
+        $applied->setTitle('seed');
+        $applied->setStartAt(new \DateTimeImmutable('2026-01-01 00:00'));
+
+        $mapper->applySyncAppointment($applied, $syncAppointment);
+
+        self::assertSame('2026-11-09 10:00', $applied->getDtstamp()?->format('Y-m-d H:i'));
+        self::assertSame(15, $applied->getRecurrenceDayOfMonth());
+        self::assertSame(2, $applied->getRecurrenceWeekOfMonth());
+        self::assertSame(11, $applied->getRecurrenceMonthOfYear());
+    }
+
+    public function testApplyLeavesRecurrenceUntouchedWithoutRecurrenceBlock(): void
+    {
+        $event = new CalendarEvent();
+        $event->setTitle('Series');
+        $event->setStartAt(new \DateTimeImmutable('2026-11-10 09:00'));
+        $event->setRecurrenceType(1);
+        $event->setRecurrenceInterval(2);
+
+        $appointment = new \SyncAppointment();
+        $appointment->subject = 'Series';
+        $appointment->starttime = new \DateTimeImmutable('2026-11-10 09:00')->getTimestamp();
+
+        new CalendarMapper()->applySyncAppointment($event, $appointment);
+
+        self::assertSame(1, $event->getRecurrenceType());
+        self::assertSame(2, $event->getRecurrenceInterval());
+    }
+
+    public function testApplyIgnoresForeignAttendeeEntriesAndNonArrayCategories(): void
+    {
+        $attendee = new \SyncAttendee();
+        $attendee->name = 'Bob Guest';
+        $attendee->email = 'bob@example.com';
+
+        $appointment = new \SyncAppointment();
+        $appointment->subject = 'Event';
+        $appointment->starttime = new \DateTimeImmutable('2026-11-10 09:00')->getTimestamp();
+        $appointment->attendees = [$attendee, 'garbage'];
+        $appointment->categories = 'Work';
+
+        $event = new CalendarEvent();
+        $event->setTitle('seed');
+        $event->setStartAt(new \DateTimeImmutable('2026-01-01 00:00'));
+        $event->setCategories(['Keep']);
+
+        new CalendarMapper()->applySyncAppointment($event, $appointment);
+
+        $attendees = $event->getAttendees();
+        self::assertNotNull($attendees);
+        self::assertCount(1, $attendees);
+        self::assertSame('bob@example.com', $attendees[0]['email']);
+        self::assertNull($event->getCategories());
+    }
+
+    public function testApplySkipsExceptionsWithoutExceptionStartTime(): void
+    {
+        $appointment = new \SyncAppointment();
+        $appointment->subject = 'Series';
+        $appointment->starttime = new \DateTimeImmutable('2026-11-10 09:00')->getTimestamp();
+        $appointment->recurrence = new \SyncRecurrence();
+        $appointment->recurrence->type = 1;
+
+        $bogus = new \SyncAppointmentException();
+        $bogus->deleted = 1;
+        $appointment->exceptions = [$bogus];
+
+        $event = new CalendarEvent();
+        $event->setTitle('seed');
+        $event->setStartAt(new \DateTimeImmutable('2026-01-01 00:00'));
+
+        new CalendarMapper()->applySyncAppointment($event, $appointment);
+
+        self::assertCount(0, $event->getExceptions());
+    }
+
+    public function testApplyAcceptsExceptionWithoutBody(): void
+    {
+        $exception = new \SyncAppointmentException();
+        $exception->exceptionstarttime = new \DateTimeImmutable('2026-11-17 09:00')->getTimestamp();
+        $exception->subject = 'Short';
+
+        $appointment = new \SyncAppointment();
+        $appointment->subject = 'Series';
+        $appointment->starttime = new \DateTimeImmutable('2026-11-10 09:00')->getTimestamp();
+        $appointment->recurrence = new \SyncRecurrence();
+        $appointment->recurrence->type = 1;
+        $appointment->exceptions = [$exception];
+
+        $event = new CalendarEvent();
+        $event->setTitle('seed');
+        $event->setStartAt(new \DateTimeImmutable('2026-01-01 00:00'));
+
+        new CalendarMapper()->applySyncAppointment($event, $appointment);
+
+        self::assertCount(1, $event->getExceptions());
+        $stored = [...$event->getExceptions()][0];
+        self::assertSame('Short', $stored->getTitle());
+        self::assertNull($stored->getDescription());
+    }
+
+    public function testApplyDropsGarbageTimezoneBlob(): void
+    {
+        $appointment = new \SyncAppointment();
+        $appointment->subject = 'Event';
+        $appointment->starttime = new \DateTimeImmutable('2026-11-10 09:00')->getTimestamp();
+        $appointment->timezone = '!!!not-base64!!!';
+
+        $event = new CalendarEvent();
+        $event->setTitle('seed');
+        $event->setStartAt(new \DateTimeImmutable('2026-01-01 00:00'));
+        $event->setTimezone('Europe/Berlin');
+
+        new CalendarMapper()->applySyncAppointment($event, $appointment);
+
+        self::assertNull($event->getTimezone());
+    }
+
     public function testBuildUsesLegacyBodyBelowProtocol12(): void
     {
         self::setProtocolVersion('2.5');
@@ -246,6 +436,7 @@ final class CalendarMapperTest extends TestCase
         $event->setEndAt(new \DateTimeImmutable('2026-11-10 10:00'));
         $event->setIsAllDay(true);
         $event->setUid('event-uid-1');
+        $event->setDtstamp(new \DateTimeImmutable('2026-11-09 10:00'));
         $event->setBusyStatus(2);
         $event->setSensitivity(1);
         $event->setReminder(15);
@@ -263,6 +454,9 @@ final class CalendarMapperTest extends TestCase
         $event->setRecurrenceUntil(new \DateTimeImmutable('2026-12-31 00:00'));
         $event->setRecurrenceOccurrences(10);
         $event->setRecurrenceDayOfWeek(62);
+        $event->setRecurrenceDayOfMonth(15);
+        $event->setRecurrenceWeekOfMonth(2);
+        $event->setRecurrenceMonthOfYear(11);
         $event->setRecurrenceCalendarType(0);
         $event->setRecurrenceFirstDayOfWeek(1);
         $event->setAttendees([

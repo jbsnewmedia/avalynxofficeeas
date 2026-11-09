@@ -112,10 +112,6 @@ final readonly class ContactService
         $accountLinkFound = false;
         $otherAccountLinkFound = false;
         foreach ($this->entityManager->getRepository(AccountAddress::class)->findBy(['address' => $address]) as $link) {
-            if (!$link instanceof AccountAddress) {
-                continue;
-            }
-
             if ($link->getAccount() === $account) {
                 $this->entityManager->remove($link);
                 $accountLinkFound = true;
