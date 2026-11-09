@@ -47,15 +47,37 @@ final readonly class MessageMapper
         $output->read = $stat['flags'];
         $output->subject = $email->getSubject() ?? '';
         $output->messageclass = 'IPM.Note';
+        $output->contentclass = DEFAULT_EMAIL_CONTENTCLASS;
         $output->internetcpid = INTERNET_CPID_UTF8;
-        $output->datereceived = $email->getReceivedAt()?->getTimestamp();
+        // 0 = low, 1 = normal, 2 = high; the value is always sent because
+        // some clients (e.g. Android 2.2) read a missing value as "low".
+        $output->importance = $email->isImportant() ? 2 : 1;
+        $output->datereceived = ($email->getReceivedAt() ?? $email->getSentAt())?->getTimestamp();
         $output->threadtopic = $output->subject;
+        $output->flag = $this->buildFlag($email);
 
         $this->assignAddresses($email, $output);
         $this->assignBody($output, $body, $contentparameters);
         $this->assignAttachments($email, $output);
 
         return $output;
+    }
+
+    /**
+     * The follow-up flag maps to the mail favorite: an active flag marks
+     * the mail as favorite, every other status (cleared or completed)
+     * clears it.
+     */
+    private function buildFlag(Email $email): \SyncMailFlags
+    {
+        $flag = new \SyncMailFlags();
+        $flag->flagstatus = $email->isFavorite() ? SYNC_FLAGSTATUS_ACTIVE : SYNC_FLAGSTATUS_CLEAR;
+
+        if ($email->isFavorite()) {
+            $flag->flagtype = 'for follow up';
+        }
+
+        return $flag;
     }
 
     /**

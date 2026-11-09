@@ -168,15 +168,9 @@ final readonly class ContactService
 
     private function copyContact(Address $address): Address
     {
-        return new Address()
-            ->setEmail($address->getEmail())
-            ->setName($address->getName())
-            ->setIsContact($address->isContact())
-            ->setFirstname($address->getFirstname())
-            ->setLastname($address->getLastname())
-            ->setCompany($address->getCompany())
-            ->setBusinessPhone($address->getBusinessPhone())
-            ->setMobilePhone($address->getMobilePhone())
-            ->setHomePhone($address->getHomePhone());
+        // The model's __clone() carries every contact field over into a
+        // fresh row (new id, no mail links) — see the copy-on-write note
+        // above.
+        return clone $address;
     }
 }

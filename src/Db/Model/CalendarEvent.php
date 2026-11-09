@@ -9,6 +9,8 @@ declare(strict_types=1);
 
 namespace AvalynxOfficeEas\Db\Model;
 
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Uid\Uuid;
 use Symfony\Component\Uid\UuidV7;
@@ -42,6 +44,8 @@ class CalendarEvent
     private ?int $recurrenceInterval = null;
     #[ORM\Column(name: 'recurrence_until', type: 'datetime_immutable', nullable: true)]
     private ?\DateTimeImmutable $recurrenceUntil = null;
+    #[ORM\Column(name: 'recurrence_occurrences', type: 'integer', nullable: true)]
+    private ?int $recurrenceOccurrences = null;
     #[ORM\Column(name: 'recurrence_day_of_week', type: 'smallint', nullable: true)]
     private ?int $recurrenceDayOfWeek = null;
     #[ORM\Column(name: 'recurrence_day_of_month', type: 'smallint', nullable: true)]
@@ -50,23 +54,64 @@ class CalendarEvent
     private ?int $recurrenceWeekOfMonth = null;
     #[ORM\Column(name: 'recurrence_month_of_year', type: 'smallint', nullable: true)]
     private ?int $recurrenceMonthOfYear = null;
+    #[ORM\Column(name: 'recurrence_calendar_type', type: 'smallint', nullable: true)]
+    private ?int $recurrenceCalendarType = null;
+    #[ORM\Column(name: 'recurrence_first_day_of_week', type: 'smallint', nullable: true)]
+    private ?int $recurrenceFirstDayOfWeek = null;
     #[ORM\Column(type: 'string', length: 190, nullable: true)]
     private ?string $uid = null;
     #[ORM\Column(type: 'datetime_immutable', nullable: true)]
     private ?\DateTimeImmutable $dtstamp = null;
     #[ORM\Column(name: 'busy_status', type: 'smallint', nullable: true)]
     private ?int $busyStatus = null;
-    #[ORM\Column(name: 'sensitivity', type: 'smallint', nullable: true)]
+    #[ORM\Column(type: 'smallint', nullable: true)]
     private ?int $sensitivity = null;
     #[ORM\Column(type: 'smallint', nullable: true)]
     private ?int $reminder = null;
+    #[ORM\Column(name: 'organizer_name', type: 'string', length: 190, nullable: true)]
+    private ?string $organizerName = null;
+    #[ORM\Column(name: 'organizer_email', type: 'string', length: 190, nullable: true)]
+    private ?string $organizerEmail = null;
+    /**
+     * Meeting attendees as a list of plain arrays (name, email, type,
+     * status); the EAS attendee object is reconstructed by the mapper.
+     *
+     * @var list<array{name: ?string, email: ?string, type: ?int, status: ?int}>|null
+     */
+    #[ORM\Column(type: 'json', nullable: true)]
+    private ?array $attendees = null;
+    #[ORM\Column(name: 'meeting_status', type: 'smallint', nullable: true)]
+    private ?int $meetingStatus = null;
+    #[ORM\Column(name: 'response_type', type: 'smallint', nullable: true)]
+    private ?int $responseType = null;
+    #[ORM\Column(name: 'response_requested', type: 'boolean', nullable: true)]
+    private ?bool $responseRequested = null;
+    #[ORM\Column(name: 'disallow_new_time_proposal', type: 'boolean', nullable: true)]
+    private ?bool $disallowNewTimeProposal = null;
+    #[ORM\Column(name: 'online_meeting_conf_link', type: 'string', length: 255, nullable: true)]
+    private ?string $onlineMeetingConfLink = null;
+    #[ORM\Column(name: 'online_meeting_external_link', type: 'string', length: 255, nullable: true)]
+    private ?string $onlineMeetingExternalLink = null;
+    /**
+     * EAS categories as a plain string list.
+     *
+     * @var list<string>|null
+     */
+    #[ORM\Column(type: 'json', nullable: true)]
+    private ?array $categories = null;
     #[ORM\ManyToOne(targetEntity: Account::class)]
     #[ORM\JoinColumn(name: 'account_id', referencedColumnName: 'id', nullable: true)]
     private ?Account $account = null;
+    /**
+     * @var Collection<int, CalendarEventException>
+     */
+    #[ORM\OneToMany(mappedBy: 'event', targetEntity: CalendarEventException::class, cascade: ['persist', 'remove'], orphanRemoval: true)]
+    private Collection $exceptions;
 
     public function __construct()
     {
         $this->id = Uuid::v7();
+        $this->exceptions = new ArrayCollection();
     }
 
     public function getId(): ?UuidV7
@@ -194,6 +239,18 @@ class CalendarEvent
         return $this;
     }
 
+    public function getRecurrenceOccurrences(): ?int
+    {
+        return $this->recurrenceOccurrences;
+    }
+
+    public function setRecurrenceOccurrences(?int $recurrenceOccurrences): self
+    {
+        $this->recurrenceOccurrences = $recurrenceOccurrences;
+
+        return $this;
+    }
+
     public function getRecurrenceDayOfWeek(): ?int
     {
         return $this->recurrenceDayOfWeek;
@@ -238,6 +295,30 @@ class CalendarEvent
     public function setRecurrenceMonthOfYear(?int $recurrenceMonthOfYear): self
     {
         $this->recurrenceMonthOfYear = $recurrenceMonthOfYear;
+
+        return $this;
+    }
+
+    public function getRecurrenceCalendarType(): ?int
+    {
+        return $this->recurrenceCalendarType;
+    }
+
+    public function setRecurrenceCalendarType(?int $recurrenceCalendarType): self
+    {
+        $this->recurrenceCalendarType = $recurrenceCalendarType;
+
+        return $this;
+    }
+
+    public function getRecurrenceFirstDayOfWeek(): ?int
+    {
+        return $this->recurrenceFirstDayOfWeek;
+    }
+
+    public function setRecurrenceFirstDayOfWeek(?int $recurrenceFirstDayOfWeek): self
+    {
+        $this->recurrenceFirstDayOfWeek = $recurrenceFirstDayOfWeek;
 
         return $this;
     }
@@ -302,6 +383,138 @@ class CalendarEvent
         return $this;
     }
 
+    public function getOrganizerName(): ?string
+    {
+        return $this->organizerName;
+    }
+
+    public function setOrganizerName(?string $organizerName): self
+    {
+        $this->organizerName = $organizerName;
+
+        return $this;
+    }
+
+    public function getOrganizerEmail(): ?string
+    {
+        return $this->organizerEmail;
+    }
+
+    public function setOrganizerEmail(?string $organizerEmail): self
+    {
+        $this->organizerEmail = $organizerEmail;
+
+        return $this;
+    }
+
+    /**
+     * @return list<array{name: ?string, email: ?string, type: ?int, status: ?int}>|null
+     */
+    public function getAttendees(): ?array
+    {
+        return $this->attendees;
+    }
+
+    /**
+     * @param list<array{name: ?string, email: ?string, type: ?int, status: ?int}>|null $attendees
+     */
+    public function setAttendees(?array $attendees): self
+    {
+        $this->attendees = $attendees;
+
+        return $this;
+    }
+
+    public function getMeetingStatus(): ?int
+    {
+        return $this->meetingStatus;
+    }
+
+    public function setMeetingStatus(?int $meetingStatus): self
+    {
+        $this->meetingStatus = $meetingStatus;
+
+        return $this;
+    }
+
+    public function getResponseType(): ?int
+    {
+        return $this->responseType;
+    }
+
+    public function setResponseType(?int $responseType): self
+    {
+        $this->responseType = $responseType;
+
+        return $this;
+    }
+
+    public function getResponseRequested(): ?bool
+    {
+        return $this->responseRequested;
+    }
+
+    public function setResponseRequested(?bool $responseRequested): self
+    {
+        $this->responseRequested = $responseRequested;
+
+        return $this;
+    }
+
+    public function getDisallowNewTimeProposal(): ?bool
+    {
+        return $this->disallowNewTimeProposal;
+    }
+
+    public function setDisallowNewTimeProposal(?bool $disallowNewTimeProposal): self
+    {
+        $this->disallowNewTimeProposal = $disallowNewTimeProposal;
+
+        return $this;
+    }
+
+    public function getOnlineMeetingConfLink(): ?string
+    {
+        return $this->onlineMeetingConfLink;
+    }
+
+    public function setOnlineMeetingConfLink(?string $onlineMeetingConfLink): self
+    {
+        $this->onlineMeetingConfLink = $onlineMeetingConfLink;
+
+        return $this;
+    }
+
+    public function getOnlineMeetingExternalLink(): ?string
+    {
+        return $this->onlineMeetingExternalLink;
+    }
+
+    public function setOnlineMeetingExternalLink(?string $onlineMeetingExternalLink): self
+    {
+        $this->onlineMeetingExternalLink = $onlineMeetingExternalLink;
+
+        return $this;
+    }
+
+    /**
+     * @return list<string>|null
+     */
+    public function getCategories(): ?array
+    {
+        return $this->categories;
+    }
+
+    /**
+     * @param list<string>|null $categories
+     */
+    public function setCategories(?array $categories): self
+    {
+        $this->categories = $categories;
+
+        return $this;
+    }
+
     public function getAccount(): ?Account
     {
         return $this->account;
@@ -310,6 +523,35 @@ class CalendarEvent
     public function setAccount(?Account $account): self
     {
         $this->account = $account;
+
+        return $this;
+    }
+
+    /**
+     * @return Collection<int, CalendarEventException>
+     */
+    public function getExceptions(): Collection
+    {
+        return $this->exceptions;
+    }
+
+    public function addException(CalendarEventException $exception): self
+    {
+        if (!$this->exceptions->contains($exception)) {
+            $this->exceptions->add($exception);
+            $exception->setEvent($this);
+        }
+
+        return $this;
+    }
+
+    public function removeException(CalendarEventException $exception): self
+    {
+        if ($this->exceptions->removeElement($exception)) {
+            if ($exception->getEvent() === $this) {
+                $exception->setEvent(null);
+            }
+        }
 
         return $this;
     }

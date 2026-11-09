@@ -192,6 +192,18 @@ class Email
         return $this;
     }
 
+    public function isImportant(): bool
+    {
+        return $this->isImportant;
+    }
+
+    public function setIsImportant(bool $important): self
+    {
+        $this->isImportant = $important;
+
+        return $this;
+    }
+
     public function isDraft(): bool
     {
         return $this->isDraft;
