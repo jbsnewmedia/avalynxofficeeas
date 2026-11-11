@@ -13,6 +13,7 @@ declare(strict_types=1);
 require dirname(__DIR__).'/vendor/autoload.php';
 
 use AvalynxOfficeEas\Db\Database;
+use AvalynxOfficeEas\Service\AutodiscoverService;
 use AvalynxOfficeEas\Service\EndpointService;
 use AvalynxOfficeEas\Service\ServiceHolder;
 
@@ -86,8 +87,13 @@ try {
     exit;
 }
 
-$endpoint = new EndpointService($projectDir);
-$response = $endpoint->handle();
+// The autodiscover endpoint answers on its own path so devices can
+// auto-configure their ActiveSync account; everything else is the
+// ActiveSync processor.
+$requestPath = strtolower((string) (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/'));
+$response = str_ends_with($requestPath, '/autodiscover/autodiscover.xml')
+    ? (new AutodiscoverService($projectDir))->handle()
+    : (new EndpointService($projectDir))->handle();
 
 http_response_code($response['status']);
 foreach ($response['headers'] as $name => $value) {
