@@ -15,6 +15,7 @@ use Doctrine\DBAL\Tools\DsnParser;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\Mapping\UnderscoreNamingStrategy;
 use Doctrine\ORM\ORMSetup;
 
 /**
@@ -45,6 +46,12 @@ final class Database
             [dirname(__DIR__).'/Db/Model'],
             true,
         );
+
+        // The AvalynxOffice core uses underscore_number_aware column names
+        // (see config/packages/doctrine.yaml) - the shared schema is the
+        // interface, so this EntityManager must generate the very same
+        // column names for its mirror models (e.g. namePrefix -> name_prefix).
+        $config->setNamingStrategy(new UnderscoreNamingStrategy(CASE_LOWER));
 
         // Symfony 8 removed the LazyGhost generator; native lazy objects
         // (PHP 8.4+) are the supported path, same as the core.
