@@ -37,8 +37,15 @@ final class ProvisioningPolicyService
 
     /**
      * The complete [default] policy with every restriction off. Keys and
-     * semantics mirror the shipped Z-Push policies.ini; empty strings mean
-     * "not set" (the device applies no rule).
+     * semantics mirror the shipped Z-Push policies.ini.
+     *
+     * The password-rule values cannot be empty: Z-Push's SyncObject->Check()
+     * rejects provisioning with "Invalid policies!" when they violate the
+     * ActiveSync value ranges (e.g. maxdevpwfailedattempts must be 4-16).
+     * They therefore carry the LEAST restrictive valid values instead —
+     * devices ignore the password rules entirely while devpwenabled is 0:
+     * length 1 (no minimum), lock 9999 (device shows "unlimited"), 16
+     * attempts, complexity 1 (single character group).
      *
      * @return array<string, int|string>
      */
@@ -50,9 +57,9 @@ final class ProvisioningPolicyService
             'devencenabled' => 0,
             'docbrowseenabled' => '',
             'attenabled' => 1,
-            'mindevpwlenngth' => '',
-            'maxinacttimedevlock' => '',
-            'maxdevpwfailedattempts' => '',
+            'mindevpwlenngth' => 1,
+            'maxinacttimedevlock' => 9999,
+            'maxdevpwfailedattempts' => 16,
             'maxattsize' => -1,
             'allowsimpledevpw' => 1,
             'devpwexpiration' => 0,
@@ -61,7 +68,7 @@ final class ProvisioningPolicyService
             'allowcam' => 1,
             'reqdevenc' => 0,
             'allowunsignedapps' => 1,
-            'mindevcomplexchars' => '',
+            'mindevcomplexchars' => 1,
             'allowwifi' => 1,
             'allowtextmessaging' => 1,
             'allowpopimapemail' => 1,

@@ -43,10 +43,10 @@ final class ProvisioningPolicyServiceTest extends TestCase
 
         self::assertSame(0, $policy['devpwenabled']);
         self::assertSame(0, $policy['alphanumpwreq']);
-        self::assertSame('', $policy['mindevpwlenngth']);
-        self::assertSame('', $policy['maxinacttimedevlock']);
-        self::assertSame('', $policy['maxdevpwfailedattempts']);
-        self::assertSame('', $policy['mindevcomplexchars']);
+        self::assertSame(1, $policy['mindevpwlenngth']);
+        self::assertSame(9999, $policy['maxinacttimedevlock']);
+        self::assertSame(16, $policy['maxdevpwfailedattempts']);
+        self::assertSame(1, $policy['mindevcomplexchars']);
         self::assertSame(0, $policy['devpwexpiration']);
         self::assertSame(0, $policy['reqdevenc']);
         self::assertSame(0, $policy['devencenabled']);
@@ -76,8 +76,9 @@ final class ProvisioningPolicyServiceTest extends TestCase
         self::assertSame(0, $policy['allowcam']);
         self::assertSame(8, $policy['mindevpwlenngth']);
 
-        // Keys without a stored deviation stay off.
-        self::assertSame('', $policy['maxinacttimedevlock']);
+        // Keys without a stored deviation fall back to the least
+        // restrictive baseline values.
+        self::assertSame(9999, $policy['maxinacttimedevlock']);
         self::assertSame(0, $policy['alphanumpwreq']);
     }
 
