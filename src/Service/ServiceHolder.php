@@ -52,8 +52,6 @@ final class ServiceHolder
     ): void {
         $entityManager ??= Database::entityManager();
 
-        ProvisioningPolicyService::apply($entityManager);
-
         $attachmentStorage = new AttachmentStorage(
             $projectDir,
             Database::env('ATTACHMENT_STORAGE_DIR', 'data/attachments') ?? 'data/attachments',

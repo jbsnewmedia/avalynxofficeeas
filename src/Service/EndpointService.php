@@ -51,6 +51,12 @@ final class EndpointService
 
         self::bootZPush($this->projectDir);
 
+        // The policy override must run AFTER ZPush::CheckConfig(): on the
+        // first request of a worker the policies array is only loaded by
+        // CheckConfig, so an earlier override (e.g. from the index.php
+        // bootstrap) would be discarded before it could take effect.
+        ProvisioningPolicyService::apply(ServiceHolder::instance()->getEntityManager());
+
         // Reset the SAPI response code register: Z-Push sets it only when
         // throwing HTTP-code exceptions. A reused FPM worker would otherwise
         // inherit the code of a previous request.
