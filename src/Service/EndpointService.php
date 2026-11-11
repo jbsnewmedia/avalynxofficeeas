@@ -246,10 +246,14 @@ final class EndpointService
         // save device data if the DeviceManager is available
         try {
             if (false !== \ZPush::GetDeviceManager(false) && \Request::IsMethodPOST()) {
+                $saveDebugLog = dirname($this->projectDir).'/eas-provision-debug.log';
+                @file_put_contents($saveDebugLog, date('c').' SAVE-BEFORE pid='.getmypid()."\n", FILE_APPEND);
                 $this->callOn(\ZPush::GetDeviceManager(), 'Save');
+                @file_put_contents($saveDebugLog, date('c').' SAVE-AFTER pid='.getmypid()."\n", FILE_APPEND);
             }
-        } catch (\Throwable) {
+        } catch (\Throwable $saveError) {
             // requests without a device id cannot have device state
+            @file_put_contents($saveDebugLog ?? dirname($this->projectDir).'/eas-provision-debug.log', date('c').' SAVE-FAIL pid='.getmypid().' '.$saveError::class.': '.$saveError->getMessage().' @'.substr((string) $saveError->getFile(), -50).':'.$saveError->getLine()."\n", FILE_APPEND);
         }
 
         $this->finalLog();
